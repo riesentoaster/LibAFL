@@ -7,8 +7,8 @@ PROFILE = { value = "release", condition = { env_not_set = ["PROFILE"] } }
 PROFILE_DIR = { value = "release", condition = { env_not_set = [
     "PROFILE_DIR",
 ] } }
-COREUITLS_VERSION = { value = "9.5", condition = { env_not_set = [
-    "COREUITLS_VERSION",
+COREUTILS_VERSION = { value = "9.5", condition = { env_not_set = [
+    "COREUTILS_VERSION",
 ] } }
 
 
@@ -25,11 +25,11 @@ mac_alias = "unsupported"
 windows_alias = "unsupported"
 
 [tasks.coreutils_src_unix]
-condition = { files_not_exist = ["./coreutils-${COREUITLS_VERSION}"] }
+condition = { files_not_exist = ["./coreutils-${COREUTILS_VERSION}"] }
 script_runner = "@shell"
 script = '''
-wget http://ftp.gnu.org/gnu/coreutils/coreutils-${COREUITLS_VERSION}.tar.gz
-tar -xf coreutils-${COREUITLS_VERSION}.tar.gz
+wget http://ftp.gnu.org/gnu/coreutils/coreutils-${COREUTILS_VERSION}.tar.gz
+tar -xf coreutils-${COREUTILS_VERSION}.tar.gz
 '''
 
 # Library
@@ -39,12 +39,12 @@ mac_alias = "unsupported"
 windows_alias = "unsupported"
 
 [tasks.coreutils_bin_unix]
-condition = { files_not_exist = ["./coreutils-${COREUITLS_VERSION}/Makefile"] }
+condition = { files_not_exist = ["./coreutils-${COREUTILS_VERSION}/Makefile"] }
 script_runner = "@shell"
 script = '''
-cd coreutils-${COREUITLS_VERSION} && CC=clang CFLAGS="-O0 -g" ./configure
+cd coreutils-${COREUTILS_VERSION} && CC=clang CFLAGS="-O0 -g" ./configure
 cd ..
-make -C coreutils-${COREUITLS_VERSION}
+make -C coreutils-${COREUTILS_VERSION}
 '''
 dependencies = ["coreutils_src"]
 
@@ -70,7 +70,10 @@ windows_alias = "unsupported"
 script_runner = "@shell"
 script = '''
 export UTIL=${@}
-LD_PRELOAD=$CARGO_TARGET_DIR/${PROFILE_DIR}/libfrida_coreutils_differential.so $UTIL -o out -H $UTIL
+[ -z "$UTIL" ] && echo "No util was passed. Usage: cargo make run [util]" && exit 1
+export UTIL="./coreutils-${COREUTILS_VERSION}/src/${UTIL}"
+echo "Fuzzing ${UTIL}"
+LD_PRELOAD=$CARGO_TARGET_DIR/${PROFILE_DIR}/libfrida_coreutils_differential.so $UTIL -i corpus -o out -H $UTIL
 '''
 dependencies = ["fuzzer", "coreutils_bin"]
 
@@ -106,6 +109,6 @@ windows_alias = "unsupported"
 clear = true
 script_runner = "@shell"
 script = '''
-make -C coreutils-${COREUITLS_VERSION} clean
+make -C coreutils-${COREUTILS_VERSION} clean
 cargo clean
 '''
