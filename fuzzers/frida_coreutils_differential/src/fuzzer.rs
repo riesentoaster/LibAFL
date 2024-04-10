@@ -4,15 +4,15 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-use std::{path::PathBuf, ptr::null};
+use std::{fs::OpenOptions, os::fd::AsRawFd, path::PathBuf};
 
 use frida_gum::Gum;
 use libafl::{
     corpus::{CachedOnDiskCorpus, OnDiskCorpus},
     events::{launcher::Launcher, llmp::LlmpRestartingEventManager, EventConfig},
-    executors::{inprocess::InProcessExecutor, ExitKind},
+    executors::{inprocess::InProcessExecutor, ExitKind, InProcessForkExecutor},
     feedback_or, feedback_or_fast,
-    feedbacks::{CrashFeedback, MaxMapFeedback, TimeFeedback, TimeoutFeedback},
+    feedbacks::{MaxMapFeedback, TimeFeedback, TimeoutFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
     generators::RandPrintablesGenerator,
     inputs::{BytesInput, HasTargetBytes},
@@ -48,19 +48,18 @@ pub unsafe fn lib(main: extern "C" fn(i32, *const *const u8, *const *const u8) -
         let target = input.target_bytes();
         let buf = target.as_slice();
         let len = buf.len().to_string();
+        let binary_path = options.harness.clone().unwrap();
+        let binary_name = binary_path.to_str().unwrap();
 
         let argv: [*const u8; 3] = [
-            null(), // dummy value
+            binary_name.as_ptr().cast(),
             len.as_ptr().cast(),
             buf.as_ptr().cast(),
         ];
 
-        let env: [*const u8; 2] = [
-            null(), // dummy value
-            null(), // dummy value
-        ];
+        let env: [*const u8; 0] = [];
 
-        main(3, argv.as_ptr(), env.as_ptr());
+        eprintln!("{}", main(3, argv.as_ptr(), env.as_ptr()));
         ExitKind::Ok
     };
 
@@ -82,11 +81,23 @@ unsafe fn fuzz(
 ) -> Result<(), Error> {
     // 'While the stats are state, they are usually used in the broker - which is likely never restarted
     let monitor = MultiMonitor::new(|s| println!("{s}"));
-
     let shmem_provider = StdShMemProvider::new()?;
 
     let mut run_client =
         |state: Option<_>, mut mgr: LlmpRestartingEventManager<_, _, _>, _core_id| {
+            let stdout = OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open("stdout.txt")
+                .expect("Failed to open output file");
+            let stderr = OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open("stderr.txt")
+                .expect("Failed to open output file");
+            libc::dup2(stdout.as_raw_fd(), libc::STDOUT_FILENO);
+            libc::dup2(stderr.as_raw_fd(), libc::STDERR_FILENO);
+
             let gum = Gum::obtain();
             let mut frida_helper =
                 FridaInstrumentationHelper::new(&gum, options, tuple_list!(CoverageRuntime::new()));
@@ -110,7 +121,7 @@ unsafe fn fuzz(
                 TimeFeedback::with_observer(&time_observer)
             );
 
-            let mut objective = feedback_or_fast!(CrashFeedback::new(), TimeoutFeedback::new());
+            let mut objective = feedback_or_fast!(TimeoutFeedback::new());
 
             // If not restarting, create a State from scratch
             let mut state = state.unwrap_or_else(|| {
@@ -144,15 +155,25 @@ unsafe fn fuzz(
             // Create the executor for an in-process function with just one observer for edge coverage
             let mut executor = FridaInProcessExecutor::new(
                 &gum,
-                InProcessExecutor::new(
+                InProcessForkExecutor::new(
                     &mut frida_harness,
                     observers,
                     &mut fuzzer,
                     &mut state,
                     &mut mgr,
+                    10,
+                    shmem_provider,
                 )?,
                 &mut frida_helper,
             );
+
+            //         harness_fn: &'a mut H,
+            // observers: OT,
+            // fuzzer: &mut Z,
+            // state: &mut S,
+            // event_mgr: &mut EM,
+            // timeout: Duration,
+            // shmem_provider: SP,
 
             // In case the corpus is empty (on first run), reset
             if state.must_load_initial_inputs() {

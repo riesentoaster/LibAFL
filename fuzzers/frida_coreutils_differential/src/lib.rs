@@ -3,6 +3,7 @@ use std::mem::transmute;
 
 use libc::{c_void, dlsym, RTLD_NEXT};
 
+// mod actual_crash_feedback;
 mod fuzzer;
 
 type LibcStartMainFunc = fn(
