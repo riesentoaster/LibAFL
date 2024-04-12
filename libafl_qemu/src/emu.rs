@@ -1,7 +1,7 @@
 //! Expose QEMU user `LibAFL` C api to Rust
 
 use core::{
-    fmt,
+    fmt::{self, Debug, Display, Formatter},
     marker::PhantomData,
     mem::{transmute, MaybeUninit},
     ptr::{addr_of, copy_nonoverlapping, null},
@@ -10,7 +10,6 @@ use std::{
     cell::{OnceCell, Ref, RefCell, RefMut},
     collections::HashSet,
     ffi::CString,
-    fmt::{Debug, Display, Formatter},
     ptr,
 };
 
@@ -24,7 +23,7 @@ use libafl_qemu_sys::{
     libafl_qemu_cpu_index, libafl_qemu_current_cpu, libafl_qemu_gdb_reply, libafl_qemu_get_cpu,
     libafl_qemu_num_cpus, libafl_qemu_num_regs, libafl_qemu_read_reg,
     libafl_qemu_remove_breakpoint, libafl_qemu_set_breakpoint, libafl_qemu_trigger_breakpoint,
-    libafl_qemu_write_reg, CPUStatePtr, FatPtr, GuestUsize,
+    libafl_qemu_write_reg, CPUArchStatePtr, CPUStatePtr, FatPtr, GuestUsize,
 };
 pub use libafl_qemu_sys::{GuestAddr, GuestPhysAddr, GuestVirtAddr};
 #[cfg(emulation_mode = "usermode")]
@@ -32,7 +31,9 @@ pub use libafl_qemu_sys::{MapInfo, MmapPerms, MmapPermsIter};
 use num_traits::Num;
 use strum::IntoEnumIterator;
 
-use crate::{command::IsCommand, GuestReg, QemuHelperTuple, Regs, StdInstrumentationFilter};
+use crate::{
+    command::IsCommand, sys::TCGTemp, GuestReg, QemuHelperTuple, Regs, StdInstrumentationFilter,
+};
 
 #[cfg(emulation_mode = "systemmode")]
 pub mod systemmode;
@@ -1164,7 +1165,7 @@ impl Qemu {
     pub fn add_read_hooks<T: Into<HookData>>(
         &self,
         data: T,
-        gen: Option<extern "C" fn(T, GuestAddr, MemAccessInfo) -> u64>,
+        gen: Option<extern "C" fn(T, GuestAddr, *mut TCGTemp, MemAccessInfo) -> u64>,
         exec1: Option<extern "C" fn(T, u64, GuestAddr)>,
         exec2: Option<extern "C" fn(T, u64, GuestAddr)>,
         exec4: Option<extern "C" fn(T, u64, GuestAddr)>,
@@ -1173,8 +1174,14 @@ impl Qemu {
     ) -> ReadHookId {
         unsafe {
             let data: u64 = data.into().0;
-            let gen: Option<extern "C" fn(u64, GuestAddr, libafl_qemu_sys::MemOpIdx) -> u64> =
-                transmute(gen);
+            let gen: Option<
+                unsafe extern "C" fn(
+                    u64,
+                    GuestAddr,
+                    *mut TCGTemp,
+                    libafl_qemu_sys::MemOpIdx,
+                ) -> u64,
+            > = transmute(gen);
             let exec1: Option<extern "C" fn(u64, u64, GuestAddr)> = transmute(exec1);
             let exec2: Option<extern "C" fn(u64, u64, GuestAddr)> = transmute(exec2);
             let exec4: Option<extern "C" fn(u64, u64, GuestAddr)> = transmute(exec4);
@@ -1192,7 +1199,7 @@ impl Qemu {
     pub fn add_write_hooks<T: Into<HookData>>(
         &self,
         data: T,
-        gen: Option<extern "C" fn(T, GuestAddr, MemAccessInfo) -> u64>,
+        gen: Option<extern "C" fn(T, GuestAddr, *mut TCGTemp, MemAccessInfo) -> u64>,
         exec1: Option<extern "C" fn(T, u64, GuestAddr)>,
         exec2: Option<extern "C" fn(T, u64, GuestAddr)>,
         exec4: Option<extern "C" fn(T, u64, GuestAddr)>,
@@ -1201,8 +1208,14 @@ impl Qemu {
     ) -> WriteHookId {
         unsafe {
             let data: u64 = data.into().0;
-            let gen: Option<extern "C" fn(u64, GuestAddr, libafl_qemu_sys::MemOpIdx) -> u64> =
-                transmute(gen);
+            let gen: Option<
+                unsafe extern "C" fn(
+                    u64,
+                    GuestAddr,
+                    *mut TCGTemp,
+                    libafl_qemu_sys::MemOpIdx,
+                ) -> u64,
+            > = transmute(gen);
             let exec1: Option<extern "C" fn(u64, u64, GuestAddr)> = transmute(exec1);
             let exec2: Option<extern "C" fn(u64, u64, GuestAddr)> = transmute(exec2);
             let exec4: Option<extern "C" fn(u64, u64, GuestAddr)> = transmute(exec4);
@@ -1241,11 +1254,11 @@ impl Qemu {
     pub fn add_backdoor_hook<T: Into<HookData>>(
         &self,
         data: T,
-        callback: extern "C" fn(T, GuestAddr),
+        callback: extern "C" fn(T, CPUArchStatePtr, GuestAddr),
     ) -> BackdoorHookId {
         unsafe {
             let data: u64 = data.into().0;
-            let callback: extern "C" fn(u64, GuestAddr) = transmute(callback);
+            let callback: extern "C" fn(u64, CPUArchStatePtr, GuestAddr) = transmute(callback);
             let num = libafl_qemu_sys::libafl_add_backdoor_hook(Some(callback), data);
             BackdoorHookId(num)
         }
@@ -1632,7 +1645,7 @@ where
     pub fn add_read_hooks<T: Into<HookData>>(
         &self,
         data: T,
-        gen: Option<extern "C" fn(T, GuestAddr, MemAccessInfo) -> u64>,
+        gen: Option<extern "C" fn(T, GuestAddr, *mut TCGTemp, MemAccessInfo) -> u64>,
         exec1: Option<extern "C" fn(T, u64, GuestAddr)>,
         exec2: Option<extern "C" fn(T, u64, GuestAddr)>,
         exec4: Option<extern "C" fn(T, u64, GuestAddr)>,
@@ -1650,7 +1663,7 @@ where
     pub fn add_write_hooks<T: Into<HookData>>(
         &self,
         data: T,
-        gen: Option<extern "C" fn(T, GuestAddr, MemAccessInfo) -> u64>,
+        gen: Option<extern "C" fn(T, GuestAddr, *mut TCGTemp, MemAccessInfo) -> u64>,
         exec1: Option<extern "C" fn(T, u64, GuestAddr)>,
         exec2: Option<extern "C" fn(T, u64, GuestAddr)>,
         exec4: Option<extern "C" fn(T, u64, GuestAddr)>,
@@ -1683,7 +1696,7 @@ where
     pub fn add_backdoor_hook<T: Into<HookData>>(
         &self,
         data: T,
-        callback: extern "C" fn(T, GuestAddr),
+        callback: extern "C" fn(T, CPUArchStatePtr, GuestAddr),
     ) -> BackdoorHookId {
         self.qemu.add_backdoor_hook(data, callback)
     }
