@@ -18,7 +18,17 @@ script = '''
 echo "Cargo-make not integrated yet on this"
 '''
 
-# libpng
+[tasks.cc]
+linux_alias = "cc_unix"
+mac_alias = "unsupported"
+windows_alias = "unsupported"
+
+[tasks.cc_unix]
+script_runner = "@shell"
+script = '''
+cargo build --profile ${PROFILE} --bin libafl_cc
+'''
+
 [tasks.coreutils_src]
 linux_alias = "coreutils_src_unix"
 mac_alias = "unsupported"
@@ -42,11 +52,13 @@ windows_alias = "unsupported"
 condition = { files_not_exist = ["./coreutils-${COREUTILS_VERSION}/Makefile"] }
 script_runner = "@shell"
 script = '''
-cd coreutils-${COREUTILS_VERSION} && CC=clang CFLAGS="-O0 -g" ./configure
-cd ..
-make -C coreutils-${COREUTILS_VERSION}
+CC=$(realpath "${CARGO_TARGET_DIR}/${PROFILE_DIR}/libafl_cc")
+echo "Using compiler: ${CC}"
+cd coreutils-${COREUTILS_VERSION}
+CC="${CC}" ./configure
+make
 '''
-dependencies = ["coreutils_src"]
+dependencies = ["coreutils_src", "cc"]
 
 # Fuzzer
 [tasks.fuzzer]
@@ -73,7 +85,7 @@ export UTIL=${@}
 [ -z "$UTIL" ] && echo "No util was passed. Usage: cargo make run [util]" && exit 1
 export UTIL="./coreutils-${COREUTILS_VERSION}/src/${UTIL}"
 echo "Fuzzing ${UTIL}"
-LD_PRELOAD=$CARGO_TARGET_DIR/${PROFILE_DIR}/libfrida_coreutils_differential.so $UTIL -i corpus -o out -H $UTIL
+LD_PRELOAD=$CARGO_TARGET_DIR/${PROFILE_DIR}/libcoreutils_differential.so $UTIL -i corpus -o out -H $UTIL
 '''
 dependencies = ["fuzzer", "coreutils_bin"]
 

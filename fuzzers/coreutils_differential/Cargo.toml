@@ -1,12 +1,12 @@
 [package]
-name = "frida_coreutils_differential"
+name = "coreutils_differential"
 version = "0.1.0"
 authors = ["Valentin Huber <contact@valentinhuber.me"]
 edition = "2021"
 license = "MIT"
 
 [lib]
-name = "frida_coreutils_differential"
+name = "coreutils_differential"
 crate_type = ["cdylib"]
 
 [features]
@@ -32,16 +32,10 @@ libafl = { path = "../../libafl/", features = [
     "std",
     "llmp_compression",
     "llmp_bind_public",
-    "frida_cli",
 ] } #,  "llmp_small_maps", "llmp_debug"]}
 libafl_bolts = { path = "../../libafl_bolts/" }
-frida-gum = { version = "0.13.6", features = [
-    "auto-download",
-    "event-sink",
-    "invocation-listener",
-] }
-libafl_frida = { path = "../../libafl_frida", features = ["cmplog"] }
 libafl_targets = { path = "../../libafl_targets", features = ["sancov_cmplog"] }
+libafl_cc = { path = "../../libafl_cc" }
 libc = "0.2"
 libloading = "0.7"
 num-traits = "0.2"
@@ -52,3 +46,11 @@ mimalloc = { version = "*", default-features = false }
 
 backtrace = "0.3"
 color-backtrace = "0.5"
+
+[[bin]]
+name = "fuzzer"
+path = "src/main.rs"
+
+[[bin]]
+name = "libafl_cc"
+path = "src/bin/libafl_cc.rs"
