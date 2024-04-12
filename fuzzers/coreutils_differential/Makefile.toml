@@ -1,0 +1,110 @@
+# Variables
+[env]
+PROFILE = { value = "release", condition = { env_not_set = ["PROFILE"] } }
+COREUTILS_VERSION = { value = "9.5", condition = { env_not_set = [
+    "COREUTILS_VERSION",
+] } }
+DEPS_PATH = "./target/${PROFILE}"
+COREUTILS_PATH = "${DEPS_PATH}/coreutils-${COREUTILS_VERSION}"
+
+
+[tasks.unsupported]
+script_runner = "@shell"
+script = '''
+echo "Cargo-make not integrated yet on this"
+'''
+
+[tasks.coreutils_src]
+linux_alias = "coreutils_src_unix"
+mac_alias = "unsupported"
+windows_alias = "unsupported"
+
+[tasks.coreutils_src_unix]
+condition = { files_not_exist = ["${COREUTILS_PATH}"] }
+script_runner = "@shell"
+script = '''
+mkdir -p "${DEPS_PATH}"
+cd "${DEPS_PATH}"
+wget "http://ftp.gnu.org/gnu/coreutils/coreutils-${COREUTILS_VERSION}.tar.gz"
+tar -xf "coreutils-${COREUTILS_VERSION}.tar.gz"
+'''
+
+[tasks.coreutils_bin]
+linux_alias = "coreutils_bin_unix"
+mac_alias = "unsupported"
+windows_alias = "unsupported"
+
+[tasks.coreutils_bin_unix]
+condition = { files_not_exist = ["${COREUTILS_PATH}/Makefile"] }
+script_runner = "@shell"
+script = '''
+cd "${COREUTILS_PATH}"
+./configure
+make
+'''
+dependencies = ["coreutils_src"]
+
+# Fuzzer
+[tasks.fuzzer]
+linux_alias = "fuzzer_unix"
+mac_alias = "unsupported"
+windows_alias = "unsupported"
+
+[tasks.fuzzer_unix]
+script_runner = "@shell"
+script = '''
+cargo build --profile ${PROFILE} --feature ${FEATURE}
+'''
+
+# Run the fuzzer
+[tasks.run]
+linux_alias = "run_unix"
+mac_alias = "unsupported"
+windows_alias = "unsupported"
+
+[tasks.run_unix]
+script_runner = "@shell"
+script = '''
+export UTIL=${@}
+[ -z "$UTIL" ] && echo "No util was passed. Usage: cargo make run [util]" && exit 1
+export UTIL="${COREUTILS_PATH}/src/${UTIL}"
+echo "Fuzzing ${UTIL}"
+LD_PRELOAD=$DEPS_PATH/libfrida_coreutils_differential.so $UTIL -i corpus -o out -H $UTIL
+'''
+dependencies = ["fuzzer", "coreutils_bin"]
+
+# # Test
+# [tasks.test]
+# linux_alias = "test_unix"
+# mac_alias = "unsupported"
+# windows_alias = "unsupported"
+
+# [tasks.test_unix]
+# script_runner = "@shell"
+# script = '''
+# rm -rf libafl_unix_shmem_server || true
+# LD_PRELOAD=$CARGO_TARGET_DIR/${PROFILE}/libfrida_executable_fuzzer.so ./libpng-harness -i corpus -o out -H ./libpng-harness > fuzz_stdout.log &
+# sleep 10s && pkill libpng-harness
+# if grep -qa "corpus: 30" fuzz_stdout.log; then
+#     echo "Fuzzer is working"
+# else
+#     echo "Fuzzer does not generate any testcases or any crashes"
+#     exit 1
+# fi
+# '''
+# dependencies = ["fuzzer", "harness"]
+
+# Clean up
+[tasks.clean]
+linux_alias = "clean_unix"
+mac_alias = "unsupported"
+windows_alias = "unsupported"
+
+[tasks.clean_unix]
+# Disable default `clean` definition
+clear = true
+script_runner = "@shell"
+script = '''
+make -C coreutils-${COREUTILS_VERSION} clean
+cargo clean
+'''
