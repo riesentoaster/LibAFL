@@ -30,7 +30,7 @@ condition = { files_not_exist = ["./${CARGO_TARGET_DIR}/GNU_coreutils"] }
 dependencies = ["create_target_dir"]
 script = '''
 cd "./${CARGO_TARGET_DIR}"
-wget --no-clobber "http://ftp.gnu.org/gnu/coreutils/coreutils-${COREUTILS_VERSION}.tar.gz"
+wget "http://ftp.gnu.org/gnu/coreutils/coreutils-${COREUTILS_VERSION}.tar.gz"
 tar -xzf "coreutils-${COREUTILS_VERSION}.tar.gz"
 rm "coreutils-${COREUTILS_VERSION}.tar.gz"
 mv -f "coreutils-${COREUTILS_VERSION}" GNU_coreutils

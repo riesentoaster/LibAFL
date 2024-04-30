@@ -6,6 +6,10 @@ This is an example of how to perform coverage-guided fuzzing on a binary using a
 - Inputs are a combination of command line arguments, `stdin`, and even files — this is why a `CommandExecutor` is required
 - It further allows analyzing all output of the binary under test
 
+## Usage
+
+This project uses [cargo-make](https://sagiegurari.github.io/cargo-make/). Use `cargo make fuzzer` to build all necessary components or invoke the fuzzer directly with `cargo make run`.
+
 ## How Coverage is transmitted
 1. Coreutils are compiled using clang's `-fsanitize-coverage=trace-pc-guard` (similar to LibAFL_target, and may in the future be unified)
    1. First, a custom coverage collection handler ([coverage.c](./coverage.c)) is compiled to an object file.
