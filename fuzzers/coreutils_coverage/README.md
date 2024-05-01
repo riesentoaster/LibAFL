@@ -3,7 +3,8 @@
 This is an example of how to perform coverage-guided fuzzing on a binary using a `CommandConfigurator`/`CommandExecutor`. Specifically, it targets coreutils, which adds the following requirements:
 - Coreutils use a complex build system (Autotools), and this approach does not require any changes to the build system (nor the source code for that matter)
 - The only changes are a different compiler, and different compilation flags, all of which can be passed as command line arguments and/or environment variables (see [Makefile.toml](./Makefile.toml))
-- Inputs are a combination of command line arguments, `stdin`, and even files — this is why a `CommandExecutor` is required
+- The binary under test calls `exit` — this is why a `CommandExecutor` is required (since this would quit the fuzzer otherwise)
+- Inputs are a combination of command line arguments, `stdin`, and even files
 - It further allows analyzing all output of the binary under test
 
 ## Usage
