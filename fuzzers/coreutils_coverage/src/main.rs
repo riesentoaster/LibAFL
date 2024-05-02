@@ -1,12 +1,20 @@
+mod executor;
+mod generator;
+mod input;
+mod mutator;
+mod shmem;
+
 use std::path::PathBuf;
 
 use executor::CoverageCommandExecutor;
+use generator::Base64Generator;
+use mutator::{Base64FlipDecodeMutator, Base64FlipIgnoreGarbageMutator, Base64WrapContentMutator};
+use shmem::get_shared_memory;
+
 use libafl::{
     corpus::{InMemoryCorpus, OnDiskCorpus},
     events::SimpleEventManager,
-    executors::command::CommandConfigurator,
     feedbacks::{ConstFeedback, MaxMapFeedback},
-    generators::RandBytesGenerator,
     monitors::SimplePrintingMonitor,
     mutators::{havoc_mutations, StdScheduledMutator},
     observers::StdMapObserver,
@@ -15,12 +23,8 @@ use libafl::{
     state::StdState,
     Error, Fuzzer, StdFuzzer,
 };
-use libafl_bolts::shmem::ShMem;
 use libafl_bolts::{current_nanos, rands::StdRand, tuples::tuple_list, AsSliceMut};
-
-mod executor;
-mod shmem;
-use crate::shmem::get_shared_memory;
+use libafl_bolts::{shmem::ShMem, tuples::Append};
 
 pub fn main() -> Result<(), Error> {
     let util = "./target/GNU_coreutils/src/base64";
@@ -52,16 +56,21 @@ pub fn main() -> Result<(), Error> {
     let scheduler = QueueScheduler::new();
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
-    let mut executor =
-        CoverageCommandExecutor::new(util, &shmem_description).into_executor(observers);
+    let mut executor = CoverageCommandExecutor::new(&shmem_description, observers);
+    // let mut executor =
+    //     CoverageCommandExecutor::new(util, &shmem_description, observers);
 
-    let mut generator = RandBytesGenerator::new(8);
+    // let mut generator = RandBytesGenerator::new(8);
+    let mut generator = Base64Generator::new(8, util);
     state
         .generate_initial_inputs(&mut fuzzer, &mut executor, &mut generator, &mut mgr, 8)
         .expect("Failed to generate the initial corpus");
 
     let mut stages = tuple_list!(StdMutationalStage::new(StdScheduledMutator::new(
         havoc_mutations()
+            .append(Base64FlipDecodeMutator)
+            .append(Base64FlipIgnoreGarbageMutator)
+            .append(Base64WrapContentMutator)
     )));
 
     fuzzer

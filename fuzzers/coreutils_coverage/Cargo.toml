@@ -19,4 +19,5 @@ libafl = { path = "../../libafl/" }
 libafl_bolts = { path = "../../libafl_bolts/" }
 libafl_cc = { path = "../../libafl_cc" }
 libc = "0.2"
+serde = { version = "1.0.199", features = ["derive"] }
 serde_json = "1.0.116"
