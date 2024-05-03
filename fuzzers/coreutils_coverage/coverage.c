@@ -30,7 +30,8 @@ void __sanitizer_cov_trace_pc_guard_init(uint32_t *start, uint32_t *stop) {
 }
 
 void __sanitizer_cov_trace_pc_guard(uint32_t *guard) {
-  *guard += 1;
+  // *guard += 1;
+  *guard = 1;
 #ifdef LOG_COV
   fprintf(stderr, "Updated guard %p to %u\n", guard, *guard);
 #endif

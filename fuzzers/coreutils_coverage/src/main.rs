@@ -57,11 +57,9 @@ pub fn main() -> Result<(), Error> {
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
     let mut executor = CoverageCommandExecutor::new(&shmem_description, observers);
-    // let mut executor =
-    //     CoverageCommandExecutor::new(util, &shmem_description, observers);
 
-    // let mut generator = RandBytesGenerator::new(8);
     let mut generator = Base64Generator::new(8, util);
+
     state
         .generate_initial_inputs(&mut fuzzer, &mut executor, &mut generator, &mut mgr, 8)
         .expect("Failed to generate the initial corpus");

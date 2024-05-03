@@ -1,7 +1,8 @@
 use std::{
     borrow::Cow,
     ffi::{OsStr, OsString},
-    io::Write,
+    fs::File,
+    io::{Seek, SeekFrom, Write},
     marker::PhantomData,
     process::{Child, Command, Stdio},
     time::Duration,
@@ -33,6 +34,7 @@ impl<I: ExtractsToCommand> CoverageCommandExecutor<I> {
     {
         let serialized_description = serde_json::to_string(&shmem_coverage_description)
             .expect("Could not stringify shared memory description");
+
         let configurator = Self {
             shmem_coverage_description: serialized_description,
             phantom: PhantomData,
@@ -54,33 +56,41 @@ where
     fn spawn_child(&mut self, input: &I) -> Result<Child, Error> {
         let mut command = Command::new(input.get_program());
         command
-            .stdin(Stdio::piped())
             .env(
                 "LD_PRELOAD",
                 "./target/release/libsetup_guard_redirection.so",
             )
             .args(input.get_args())
-            .arg(&self.shmem_coverage_description);
-        command.stderr(Stdio::null()).stdout(Stdio::null());
+            .arg(&self.shmem_coverage_description)
+            .stderr(Stdio::null())
+            .stdout(Stdio::null())
+            .stdin(pseudo_pipe(input.get_stdin())?);
 
         let child = command.spawn().expect("failed to start process");
-        child
-            .stdin
-            .as_ref()
-            .expect("failed to get stdin ref")
-            .write_all(input.get_stdin())
-            .map_err(|e| {
-                Error::illegal_state(format!(
-                    "Could not write input to stdin with error {:?} for input {:?}",
-                    e,
-                    serde_json::to_string_pretty(&input).expect("Serialization error")
-                ))
-            })?;
-
         Ok(child)
     }
 
     fn exec_timeout(&self) -> Duration {
         Duration::from_secs(5)
     }
+}
+
+/// Creates a [`Stdio`] object that can be used to write data to a [`Command`]'s `stdin`.
+///
+/// The implementation relies on an in-memory temp file written to `/dev/shm/`.
+///
+/// # Errors on
+///
+/// This function will return an error if the underlying os functions error.
+fn pseudo_pipe(data: &[u8]) -> Result<Stdio, Error> {
+    let mut temp_file = File::create("/dev/shm/temp")
+        .map_err(|e| Error::os_error(e, "Could not create temp file"))?;
+    temp_file
+        .write_all(data)
+        .map_err(|e| Error::os_error(e, "Could not write data to temp file"))?;
+    // temp_file.sync_all().expect("Could not wait until data is done writing");
+    temp_file
+        .seek(SeekFrom::Start(0))
+        .map_err(|e| Error::os_error(e, "Could reset seek in temp file"))?;
+    Ok(Stdio::from(temp_file))
 }
