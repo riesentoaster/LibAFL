@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fs::File,
     io::{Seek, SeekFrom, Write},
     marker::PhantomData,
@@ -20,12 +20,16 @@ use serde::Serialize;
 #[derive(Debug)]
 pub struct CoverageCommandExecutor<I: ExtractsToCommand> {
     shmem_coverage_description: String,
+    id: String,
+    util: String,
     phantom: PhantomData<I>,
 }
 impl<I: ExtractsToCommand> CoverageCommandExecutor<I> {
     pub fn new<OT, S>(
         shmem_coverage_description: &ShMemDescription,
         observers: OT,
+        util: &str,
+        id: usize,
     ) -> CommandExecutor<OT, S, CoverageCommandExecutor<I>>
     where
         S: State,
@@ -37,6 +41,8 @@ impl<I: ExtractsToCommand> CoverageCommandExecutor<I> {
 
         let configurator = Self {
             shmem_coverage_description: serialized_description,
+            id: format!("/dev/shm/temp{id}"),
+            util: util.to_string(),
             phantom: PhantomData,
         };
         configurator.into_executor(observers)
@@ -44,7 +50,6 @@ impl<I: ExtractsToCommand> CoverageCommandExecutor<I> {
 }
 
 pub trait ExtractsToCommand: Serialize {
-    fn get_program(&self) -> &OsString;
     fn get_stdin(&self) -> &Vec<u8>;
     fn get_args<'a>(&self) -> Vec<Cow<'a, OsStr>>;
 }
@@ -54,7 +59,7 @@ where
     I: ExtractsToCommand,
 {
     fn spawn_child(&mut self, input: &I) -> Result<Child, Error> {
-        let mut command = Command::new(input.get_program());
+        let mut command = Command::new(&self.util);
         command
             .env(
                 "LD_PRELOAD",
@@ -64,7 +69,7 @@ where
             .arg(&self.shmem_coverage_description)
             .stderr(Stdio::null())
             .stdout(Stdio::null())
-            .stdin(pseudo_pipe(input.get_stdin())?);
+            .stdin(pseudo_pipe(input.get_stdin(), &self.id)?);
 
         let child = command.spawn().expect("failed to start process");
         Ok(child)
@@ -82,9 +87,9 @@ where
 /// # Errors on
 ///
 /// This function will return an error if the underlying os functions error.
-fn pseudo_pipe(data: &[u8]) -> Result<Stdio, Error> {
-    let mut temp_file = File::create("/dev/shm/temp")
-        .map_err(|e| Error::os_error(e, "Could not create temp file"))?;
+fn pseudo_pipe(data: &[u8], path: &str) -> Result<Stdio, Error> {
+    let mut temp_file =
+        File::create(path).map_err(|e| Error::os_error(e, "Could not create temp file"))?;
     temp_file
         .write_all(data)
         .map_err(|e| Error::os_error(e, "Could not write data to temp file"))?;

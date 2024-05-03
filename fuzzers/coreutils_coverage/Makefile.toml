@@ -84,5 +84,5 @@ cargo build --profile ${PROFILE}
 dependencies = ["fuzzer"]
 script_runner = "@shell"
 script = '''
-./target/release/coreutils
+./target/release/coreutils --output crashes ${@}
 '''

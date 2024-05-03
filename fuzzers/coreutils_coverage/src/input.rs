@@ -15,7 +15,6 @@ pub struct Base64Input {
     pub decode: bool,
     pub ignore_garbage: bool,
     pub wrap: Option<i16>,
-    program: OsString,
 }
 
 impl Input for Base64Input {
@@ -38,11 +37,6 @@ impl HasBytesVec for Base64Input {
 }
 
 impl ExtractsToCommand for Base64Input {
-    #[must_use]
-    fn get_program(&self) -> &OsString {
-        &self.program
-    }
-
     #[must_use]
     fn get_stdin(&self) -> &Vec<u8> {
         &self.raw_data
@@ -67,19 +61,12 @@ impl ExtractsToCommand for Base64Input {
 
 impl Base64Input {
     #[must_use]
-    pub fn new(
-        raw_data: &[u8],
-        decode: bool,
-        ignore_garbage: bool,
-        wrap: Option<i16>,
-        program: &str,
-    ) -> Self {
+    pub fn new(raw_data: &[u8], decode: bool, ignore_garbage: bool, wrap: Option<i16>) -> Self {
         Self {
             raw_data: Vec::from(raw_data),
             decode,
             ignore_garbage,
             wrap,
-            program: OsString::from(program),
         }
     }
 }

@@ -8,11 +8,11 @@ use libafl_bolts::prelude::Rand;
 
 use crate::input::Base64Input;
 
-pub struct Base64Generator<'a> {
+pub struct Base64Generator {
     max_size: usize,
-    util: &'a str,
 }
-impl<'a, S> Generator<Base64Input, S> for Base64Generator<'a>
+
+impl<S> Generator<Base64Input, S> for Base64Generator
 where
     S: HasRand,
 {
@@ -28,18 +28,12 @@ where
         } else {
             None
         };
-        Ok(Base64Input::new(
-            raw_data,
-            decode,
-            ignore_garbage,
-            wrap,
-            self.util,
-        ))
+        Ok(Base64Input::new(raw_data, decode, ignore_garbage, wrap))
     }
 }
 
-impl<'a> Base64Generator<'a> {
-    pub fn new(max_size: usize, util: &'a str) -> Self {
-        Self { max_size, util }
+impl Base64Generator {
+    pub fn new(max_size: usize) -> Self {
+        Self { max_size }
     }
 }
