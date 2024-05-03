@@ -36,10 +36,7 @@ use libafl_bolts::{
 use libafl_bolts::{shmem::ShMem, tuples::Append};
 
 pub fn main() -> Result<(), Error> {
-    println!("Pre parse");
     let options = parse_args();
-
-    println!("Post parse");
 
     let util = "./target/GNU_coreutils/src/base64";
     let monitor = MultiMonitor::new(|s| println!("{s}"));
