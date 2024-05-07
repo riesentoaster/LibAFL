@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
 
-// #define LOG_COV 0
+// #define LOG_COV 1
 
 static uint32_t *guard_stop = 0;
 static uint32_t *guard_start = 0;
@@ -46,7 +46,7 @@ __attribute__((visibility("default"))) size_t get_guard_count() {
 
 __attribute__((visibility("default"))) uint32_t *get_guard_values() {
 #ifdef LOG_COV
-  fprintf(stderr, "Returned guard values p\n", guard_start);
+  fprintf(stderr, "Returned guard values %p\n", guard_start);
 #endif
   return guard_start;
 }

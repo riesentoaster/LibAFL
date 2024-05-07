@@ -4,17 +4,16 @@ mod input;
 mod mutator;
 mod shmem;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use executor::CoverageCommandExecutor;
 use generator::Base64Generator;
 
 use mutator::{Base64FlipDecodeMutator, Base64FlipIgnoreGarbageMutator, Base64WrapContentMutator};
-use shmem::get_shared_memory;
 
 use libafl::{
     corpus::{InMemoryCorpus, OnDiskCorpus},
-    events::{EventConfig, Launcher, LlmpRestartingEventManager},
+    events::{EventConfig, EventFirer, Launcher, LlmpRestartingEventManager, LogSeverity},
     feedbacks::{ConstFeedback, MaxMapFeedback},
     monitors::MultiMonitor,
     mutators::{havoc_mutations, StdScheduledMutator},
@@ -29,23 +28,49 @@ use libafl_bolts::{
     core_affinity::CoreId,
     current_nanos,
     rands::StdRand,
-    shmem::{ShMemProvider, StdShMemProvider},
+    shmem::{MmapShMemProvider, ShMemProvider, StdShMemProvider},
     tuples::tuple_list,
     AsSliceMut,
 };
 use libafl_bolts::{shmem::ShMem, tuples::Append};
+use shmem::{get_guard_num, make_shmem_persist};
 
-pub fn main() -> Result<(), Error> {
+pub fn main() {
+    // let util = "./target/GNU_coreutils/src/base64";
+    let util = "./target/uutils_coreutils/target/release/base64";
+    match fuzz(util) {
+        Ok(_) => (),
+        Err(Error::ShuttingDown) => {
+            println!("Orderly shutdown");
+        }
+        Err(e) => {
+            println!("Received Error: {:?}", e);
+        }
+    }
+}
+
+fn fuzz(util: &str) -> Result<(), Error> {
+    if !Path::new(util).exists() {
+        return Err(Error::illegal_argument(format!("Util {} not found", util)));
+    }
+
+    let guard_num = get_guard_num(util)?;
+
+    let mut shmem_provider = MmapShMemProvider::default();
+
     let options = parse_args();
 
-    let util = "./target/GNU_coreutils/src/base64";
     let monitor = MultiMonitor::new(|s| println!("{s}"));
 
     let run_client = |state: Option<_>,
                       mut mgr: LlmpRestartingEventManager<_, _, _>,
                       core_id: CoreId|
      -> Result<(), Error> {
-        let mut shmem = get_shared_memory(util)?;
+        let mut shmem = shmem_provider
+            .new_shmem(guard_num * 4)
+            .expect("Could not get the shared memory map");
+
+        make_shmem_persist(&shmem.description());
 
         let shmem_description = shmem.description();
         let shmem_coverage_slice = shmem.as_slice_mut();
@@ -69,6 +94,13 @@ pub fn main() -> Result<(), Error> {
             )
             .unwrap()
         });
+
+        mgr.log(
+            &mut state,
+            LogSeverity::Error,
+            format!("Starting client {:?}", core_id),
+        )
+        .expect("Could not log startup");
 
         let scheduler = QueueScheduler::new();
         let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);

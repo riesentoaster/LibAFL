@@ -24,7 +24,7 @@ clang -c -o "./${CARGO_TARGET_DIR}/coverage.o" coverage.c
 '''
 
 
-[tasks.coreutils_src]
+[tasks.gnu_coreutils_src]
 script_runner = "@shell"
 condition = { files_not_exist = ["./${CARGO_TARGET_DIR}/GNU_coreutils"] }
 dependencies = ["create_target_dir"]
@@ -36,11 +36,11 @@ rm "coreutils-${COREUTILS_VERSION}.tar.gz"
 mv -f "coreutils-${COREUTILS_VERSION}" GNU_coreutils
 '''
 
-[tasks.coreutils_bin]
+[tasks.gnu_coreutils_bin]
 condition = { files_not_exist = [
     "./${CARGO_TARGET_DIR}/GNU_coreutils/Makefile",
 ] }
-dependencies = ["coreutils_src", "coverage_collector", "create_target_dir"]
+dependencies = ["gnu_coreutils_src", "coverage_collector", "create_target_dir"]
 script_runner = "@shell"
 script = '''
 cd "./${CARGO_TARGET_DIR}"
@@ -57,6 +57,50 @@ export LDFLAGS="-rdynamic ${COVERAGE_FILE}"
 ./configure CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS"
 make 
 '''
+
+[tasks.uutils_coreutils_src]
+script_runner = "@shell"
+condition = { files_not_exist = ["./${CARGO_TARGET_DIR}/uutils_coreutils"] }
+dependencies = ["create_target_dir"]
+script = '''
+cd "./${CARGO_TARGET_DIR}"
+git clone https://github.com/uutils/coreutils
+mv coreutils uutils_coreutils
+'''
+
+[tasks.uutils_coreutils_bin]
+script_runner = "@shell"
+condition = { files_not_exist = [
+    "./${CARGO_TARGET_DIR}/uutils_coreutils/target/release/coreutils",
+] }
+dependencies = [
+    "uutils_coreutils_src",
+    "coverage_collector",
+    "create_target_dir",
+]
+script = '''
+cd "./${CARGO_TARGET_DIR}"
+
+# absolute path because build system traverses into subdirectories
+COVERAGE_FILE=$(realpath "./coverage.o")
+
+cd ./uutils_coreutils
+
+export CFLAGS="-g"
+export RUSTFLAGS=" \
+    -Cpasses=sancov-module \
+    -Cllvm-args=-sanitizer-coverage-level=3 \
+    -Cllvm-args=-sanitizer-coverage-trace-pc-guard \
+    -Clink-arg=-rdynamic \
+    -Clink-arg=${COVERAGE_FILE}"
+
+export PROFILE="release"
+
+make
+'''
+
+[tasks.coreutils_bin]
+dependencies = ["gnu_coreutils_bin", "uutils_coreutils_bin"]
 
 [tasks.get_guard_num]
 script_runner = "@shell"

@@ -1,10 +1,10 @@
 use std::{io::Error as IOError, path::Path, process::Command};
 
 use libafl::Error;
-use libafl_bolts::shmem::{MmapShMem, MmapShMemProvider, ShMem, ShMemDescription, ShMemProvider};
+use libafl_bolts::shmem::ShMemDescription;
 use libc::{fcntl, FD_CLOEXEC, F_GETFD, F_SETFD};
 
-fn get_guard_num(util: &str) -> Result<usize, Error> {
+pub fn get_guard_num(util: &str) -> Result<usize, Error> {
     if !Path::new(util).exists() {
         panic!("Missing util binary.\nCompile it using `cargo make bin` first.",);
     }
@@ -22,10 +22,13 @@ fn get_guard_num(util: &str) -> Result<usize, Error> {
         .parse::<usize>()?;
 
     println!("Got guard_num {}", guard_num);
-    Ok(guard_num)
+    match guard_num {
+        0 => Err(Error::illegal_state("Binary reported a guard count of 0")),
+        e => Ok(e),
+    }
 }
 
-fn make_shmem_persist(description: &ShMemDescription) {
+pub fn make_shmem_persist(description: &ShMemDescription) {
     let fd = description.id.as_str().parse().unwrap();
     let flags = unsafe { fcntl(fd, F_GETFD) };
 
@@ -36,16 +39,4 @@ fn make_shmem_persist(description: &ShMemDescription) {
     if result == -1 {
         panic!("Failed to set FD flags: {}", IOError::last_os_error());
     }
-}
-
-pub fn get_shared_memory(util: &str) -> Result<MmapShMem, Error> {
-    let guard_num = get_guard_num(util)?;
-
-    let mut shmem_provider = MmapShMemProvider::default();
-    let shmem = shmem_provider
-        .new_shmem(guard_num * 4)
-        .expect("Could not get the shared memory map");
-
-    make_shmem_persist(&shmem.description());
-    Ok(shmem)
 }
