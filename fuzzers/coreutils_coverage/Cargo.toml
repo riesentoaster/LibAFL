@@ -9,15 +9,19 @@ license = "MIT"
 members = ["get_guard_num", "setup_guard_redirection"]
 
 [profile.release]
-lto = true
-codegen-units = 1
-opt-level = 3
+# lto = true
+# codegen-units = 1
+# opt-level = 3
 debug = true
 
 [dependencies]
-libafl = { path = "../../libafl/" }
-libafl_bolts = { path = "../../libafl_bolts/", features = ["cli"] }
-libafl_cc = { path = "../../libafl_cc" }
+libafl = { path = "../../libafl/", features = [
+    "cli",
+    "errors_backtrace",
+    # "introspection",
+    # "scalability_introspection",
+] }
+libafl_bolts = { path = "../../libafl_bolts/" }
 libc = "0.2"
 serde = { version = "1.0.199", features = ["derive"] }
 serde_json = "1.0.116"

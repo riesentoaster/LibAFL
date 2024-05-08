@@ -85,7 +85,8 @@ unsafe fn extract_shmem_description(argc: &mut i32, argv: *mut *const char) {
 fn log<T: Debug>(s: T) {
     OpenOptions::new()
         .append(true)
-        .open("output.txt")
+        .create(true)
+        .open("redirection.log")
         .expect("Failed to open file")
         .write_all(
             format!(
