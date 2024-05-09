@@ -1,16 +1,14 @@
+mod base64;
 mod executor;
 mod feedback;
-mod generator;
-mod input;
-mod mutator;
 mod shmem;
 
 use std::path::{Path, PathBuf};
 
+use base64::Base64Generator;
+use base64::{Base64FlipDecodeMutator, Base64FlipIgnoreGarbageMutator, Base64WrapContentMutator};
 use executor::CoverageCommandExecutor;
 use feedback::PseudoPrintFeedback;
-use generator::Base64Generator;
-use mutator::{Base64FlipDecodeMutator, Base64FlipIgnoreGarbageMutator, Base64WrapContentMutator};
 use shmem::{get_guard_num, make_shmem_persist};
 
 use libafl::{
@@ -27,6 +25,7 @@ use libafl::{
     state::StdState,
     Error, Fuzzer, StdFuzzer,
 };
+
 use libafl_bolts::{
     cli::parse_args,
     core_affinity::CoreId,

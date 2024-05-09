@@ -1,13 +1,114 @@
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    ffi::{OsStr, OsString},
+};
+
+use serde::{Deserialize, Serialize};
 
 use libafl::{
+    generators::{Generator, RandBytesGenerator},
+    inputs::{HasBytesVec, Input},
     mutators::{havoc_mutations, MutationResult, Mutator, MutatorsTuple},
     state::{HasCorpus, HasMaxSize, HasRand},
     Error,
 };
-use libafl_bolts::{rands::Rand, HasLen, Named};
 
-use crate::input::Base64Input;
+use libafl_bolts::{prelude::Rand, HasLen, Named};
+
+use crate::executor::ExtractsToCommand;
+
+/// An [`Input`] implementation for coreutils' `base64`
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Base64Input {
+    pub raw_data: Vec<u8>,
+    pub decode: bool,
+    pub ignore_garbage: bool,
+    pub wrap: Option<i16>,
+}
+
+impl Input for Base64Input {
+    #[must_use]
+    fn generate_name(&self, idx: usize) -> String {
+        format!("{idx} — {self:?}")
+    }
+}
+
+impl HasBytesVec for Base64Input {
+    #[must_use]
+    fn bytes(&self) -> &[u8] {
+        &self.raw_data
+    }
+
+    #[must_use]
+    fn bytes_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.raw_data
+    }
+}
+
+impl ExtractsToCommand for Base64Input {
+    #[must_use]
+    fn get_stdin(&self) -> &Vec<u8> {
+        &self.raw_data
+    }
+
+    #[must_use]
+    fn get_args<'a>(&self) -> Vec<Cow<'a, OsStr>> {
+        let mut args = Vec::with_capacity(4);
+        if self.decode {
+            args.push(Cow::Borrowed(OsStr::new("-d")))
+        }
+        if self.ignore_garbage {
+            args.push(Cow::Borrowed(OsStr::new("-i")))
+        }
+        if let Some(w) = self.wrap {
+            args.push(Cow::Borrowed(OsStr::new("-w")));
+            args.push(Cow::Owned(OsString::from(w.to_string())))
+        }
+        args
+    }
+}
+
+impl Base64Input {
+    #[must_use]
+    pub fn new(raw_data: &[u8], decode: bool, ignore_garbage: bool, wrap: Option<i16>) -> Self {
+        Self {
+            raw_data: Vec::from(raw_data),
+            decode,
+            ignore_garbage,
+            wrap,
+        }
+    }
+}
+
+pub struct Base64Generator {
+    max_size: usize,
+}
+
+impl<S> Generator<Base64Input, S> for Base64Generator
+where
+    S: HasRand,
+{
+    fn generate(&mut self, state: &mut S) -> Result<Base64Input, Error> {
+        let binding = RandBytesGenerator::new(self.max_size).generate(state)?;
+        let raw_data = binding.bytes();
+
+        let rand = state.rand_mut();
+        let decode = rand.coinflip(0.5);
+        let ignore_garbage = rand.coinflip(0.5);
+        let wrap = if rand.coinflip(0.5) {
+            Some(rand.next() as i16)
+        } else {
+            None
+        };
+        Ok(Base64Input::new(raw_data, decode, ignore_garbage, wrap))
+    }
+}
+
+impl Base64Generator {
+    pub fn new(max_size: usize) -> Self {
+        Self { max_size }
+    }
+}
 
 pub struct Base64FlipDecodeMutator;
 impl<S> Mutator<Base64Input, S> for Base64FlipDecodeMutator
