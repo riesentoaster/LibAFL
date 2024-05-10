@@ -22,7 +22,7 @@ use libafl::{
     executors::DiffExecutor,
     feedback_and, feedback_or, feedback_or_fast,
     feedbacks::{ConstFeedback, CrashFeedback, MaxMapFeedback, TimeFeedback, TimeoutFeedback},
-    monitors::MultiMonitor,
+    monitors::tui::{ui::TuiUI, TuiMonitor},
     mutators::{havoc_mutations, StdScheduledMutator},
     observers::{MultiMapObserver, StdErrObserver, StdMapObserver, StdOutObserver, TimeObserver},
     schedulers::QueueScheduler,
@@ -76,7 +76,8 @@ fn fuzz(util: &str) -> Result<(), Error> {
 
     let options = parse_args();
 
-    let monitor = MultiMonitor::new(|s| println!("{s}"));
+    // let monitor = MultiMonitor::new(|s| println!("{s}"));
+    let monitor = TuiMonitor::new(TuiUI::new("coreutils fuzzer".to_string(), true));
 
     let uutils_guard_num = get_guard_num(&uutils_path)?;
     let gnu_guard_num = get_guard_num(&gnu_path)?;
