@@ -33,7 +33,7 @@ impl Display for Base64Input {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         write!(
             f,
-            "input: \"{}\"",
+            "input: '{}'",
             vec_string_mapper(&Some(self.raw_data.clone()))
         )?;
         if self.decode {

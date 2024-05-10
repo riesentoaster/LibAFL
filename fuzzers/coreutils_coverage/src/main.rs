@@ -153,6 +153,8 @@ fn fuzz(util: &str) -> Result<(), Error> {
                     vec_string_mapper(&o2.stdout)
                         .replace(&gnu_path, "[libafl: util_path]")
                         .to_owned(),
+                    uutils_path.to_string(),
+                    gnu_path.to_string(),
                 )
             },
         )?;
@@ -166,6 +168,8 @@ fn fuzz(util: &str) -> Result<(), Error> {
                 StdErrBinaryDiffMetadata::new(
                     vec_string_mapper(&o1.stderr).to_owned(),
                     vec_string_mapper(&o2.stderr).to_owned(),
+                    uutils_path.to_string(),
+                    gnu_path.to_string(),
                 )
             },
         )?;

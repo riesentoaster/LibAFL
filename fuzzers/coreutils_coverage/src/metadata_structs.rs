@@ -4,16 +4,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, SerdeAny)]
 pub struct StdOutDiffMetadata {
     name: String,
-    o1_res: String,
-    o2_res: String,
+    o1: NamedString,
+    o2: NamedString,
 }
 
 impl StdOutDiffMetadata {
-    pub fn new(o1_res: String, o2_res: String) -> Self {
+    pub fn new(o1_res: String, o2_res: String, o1_name: String, o2_name: String) -> Self {
         Self {
             name: "stdout-diff".to_string(),
-            o1_res,
-            o2_res,
+            o1: NamedString::new(o1_name, o1_res),
+            o2: NamedString::new(o2_name, o2_res),
         }
     }
 }
@@ -21,17 +21,17 @@ impl StdOutDiffMetadata {
 #[derive(Debug, Serialize, Deserialize, SerdeAny)]
 pub struct StdErrDiffMetadata {
     name: String,
-    o1_res: String,
-    o2_res: String,
+    o1: NamedString,
+    o2: NamedString,
 }
 
 impl StdErrDiffMetadata {
     #[allow(dead_code)]
-    pub fn new(o1_res: String, o2_res: String) -> Self {
+    pub fn new(o1_res: String, o2_res: String, o1_name: String, o2_name: String) -> Self {
         Self {
             name: "stderr-diff".to_string(),
-            o1_res,
-            o2_res,
+            o1: NamedString::new(o1_name, o1_res),
+            o2: NamedString::new(o2_name, o2_res),
         }
     }
 }
@@ -39,16 +39,16 @@ impl StdErrDiffMetadata {
 #[derive(Debug, Serialize, Deserialize, SerdeAny)]
 pub struct StdErrBinaryDiffMetadata {
     name: String,
-    o1_res: String,
-    o2_res: String,
+    o1: NamedString,
+    o2: NamedString,
 }
 
 impl StdErrBinaryDiffMetadata {
-    pub fn new(o1_res: String, o2_res: String) -> Self {
+    pub fn new(o1_res: String, o2_res: String, o1_name: String, o2_name: String) -> Self {
         Self {
             name: "stderr-binary-diff".to_string(),
-            o1_res,
-            o2_res,
+            o1: NamedString::new(o1_name, o1_res),
+            o2: NamedString::new(o2_name, o2_res),
         }
     }
 }
@@ -78,5 +78,17 @@ impl InputMetadata {
             name: "input-metadata".to_string(),
             input,
         }
+    }
+}
+
+#[derive(SerdeAny, Debug, Serialize, Deserialize)]
+struct NamedString {
+    name: String,
+    value: String,
+}
+
+impl NamedString {
+    fn new(name: String, value: String) -> Self {
+        Self { name, value }
     }
 }
