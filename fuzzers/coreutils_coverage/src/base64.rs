@@ -1,24 +1,27 @@
+use core::fmt;
 use std::{
     borrow::Cow,
     ffi::{OsStr, OsString},
+    fmt::{Debug, Display, Formatter},
+    hash::{DefaultHasher, Hash, Hasher},
 };
 
 use serde::{Deserialize, Serialize};
 
 use libafl::{
-    generators::{Generator, RandBytesGenerator},
+    generators::{Generator, RandPrintablesGenerator},
     inputs::{HasBytesVec, Input},
     mutators::{havoc_mutations, MutationResult, Mutator, MutatorsTuple},
     state::{HasCorpus, HasMaxSize, HasRand},
-    Error,
+    Error, SerdeAny,
 };
 
 use libafl_bolts::{prelude::Rand, HasLen, Named};
 
-use crate::executor::ExtractsToCommand;
+use crate::{generic::ExtractsToCommand, metadata_structs::vec_string_mapper};
 
 /// An [`Input`] implementation for coreutils' `base64`
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Hash, SerdeAny)]
 pub struct Base64Input {
     pub raw_data: Vec<u8>,
     pub decode: bool,
@@ -26,11 +29,35 @@ pub struct Base64Input {
     pub wrap: Option<i16>,
 }
 
+impl Display for Base64Input {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "input: \"{}\"",
+            vec_string_mapper(&Some(self.raw_data.clone()))
+        )?;
+        if self.decode {
+            write!(f, ", decode")?;
+        }
+        if self.ignore_garbage {
+            write!(f, ", ignore_garbage")?;
+        }
+        if let Some(w) = self.wrap {
+            write!(f, ", wrap: {}", w)?;
+        }
+        Ok(())
+    }
+}
+
 impl Input for Base64Input {
     #[must_use]
-    fn generate_name(&self, idx: usize) -> String {
-        format!("{idx} — {self:?}")
+    fn generate_name(&self, _idx: usize) -> String {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
     }
+
+    fn wrapped_as_testcase(&mut self) {}
 }
 
 impl HasBytesVec for Base64Input {
@@ -89,7 +116,7 @@ where
     S: HasRand,
 {
     fn generate(&mut self, state: &mut S) -> Result<Base64Input, Error> {
-        let binding = RandBytesGenerator::new(self.max_size).generate(state)?;
+        let binding = RandPrintablesGenerator::new(self.max_size).generate(state)?;
         let raw_data = binding.bytes();
 
         let rand = state.rand_mut();
@@ -123,8 +150,7 @@ where
 
 impl Named for Base64FlipDecodeMutator {
     fn name(&self) -> &Cow<'static, str> {
-        static NAME: Cow<'static, str> = Cow::Borrowed("Base64FlipDecodeMutator");
-        &NAME
+        &Cow::Borrowed("Base64FlipDecodeMutator")
     }
 }
 pub struct Base64FlipIgnoreGarbageMutator;
@@ -140,8 +166,7 @@ where
 
 impl Named for Base64FlipIgnoreGarbageMutator {
     fn name(&self) -> &Cow<'static, str> {
-        static NAME: Cow<'static, str> = Cow::Borrowed("Base64FlipIgnoreGarbageMutator");
-        &NAME
+        &Cow::Borrowed("Base64FlipIgnoreGarbageMutator")
     }
 }
 
@@ -163,8 +188,7 @@ where
 
 impl Named for Base64WrapContentMutator {
     fn name(&self) -> &Cow<'static, str> {
-        static NAME: Cow<'static, str> = Cow::Borrowed("Base64WrapContentMutator");
-        &NAME
+        &Cow::Borrowed("Base64WrapContentMutator")
     }
 }
 pub struct Base64FlipWrapMutator;
@@ -185,8 +209,7 @@ where
 
 impl Named for Base64FlipWrapMutator {
     fn name(&self) -> &Cow<'static, str> {
-        static NAME: Cow<'static, str> = Cow::Borrowed("Base64FlipWrapMutator");
-        &NAME
+        &Cow::Borrowed("Base64FlipWrapMutator")
     }
 }
 pub struct Base64RawDataMutator;
@@ -204,7 +227,6 @@ where
 
 impl Named for Base64RawDataMutator {
     fn name(&self) -> &Cow<'static, str> {
-        static NAME: Cow<'static, str> = Cow::Borrowed("Base64RawDataMutator");
-        &NAME
+        &Cow::Borrowed("Base64RawDataMutator")
     }
 }

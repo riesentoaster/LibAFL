@@ -1,30 +1,37 @@
 mod base64;
-mod executor;
-mod feedback;
+mod generic;
+mod metadata_structs;
+
 mod shmem;
 
 use std::path::{Path, PathBuf};
 
-use base64::Base64Generator;
-use base64::{Base64FlipDecodeMutator, Base64FlipIgnoreGarbageMutator, Base64WrapContentMutator};
-use executor::CoverageCommandExecutor;
-use feedback::PseudoPrintFeedback;
-use shmem::{get_guard_num, make_shmem_persist};
+use base64::{
+    Base64FlipDecodeMutator, Base64FlipIgnoreGarbageMutator, Base64Generator, Base64Input,
+    Base64WrapContentMutator,
+};
+
+use generic::{CoverageCommandExecutor, DiffWithMetadataFeedback, InputLoggerFeedback};
+use metadata_structs::{
+    vec_string_mapper, InputMetadata, StdErrBinaryDiffMetadata, StdOutDiffMetadata,
+};
 
 use libafl::{
-    corpus::{InMemoryCorpus, InMemoryOnDiskCorpus},
+    corpus::{InMemoryCorpus, OnDiskCorpus},
     events::{EventConfig, Launcher, LlmpRestartingEventManager},
     executors::DiffExecutor,
-    feedback_or, feedback_or_fast,
-    feedbacks::{CrashFeedback, MaxMapFeedback, TimeoutFeedback},
+    feedback_and, feedback_or, feedback_or_fast,
+    feedbacks::{ConstFeedback, CrashFeedback, MaxMapFeedback, TimeFeedback, TimeoutFeedback},
     monitors::MultiMonitor,
     mutators::{havoc_mutations, StdScheduledMutator},
-    observers::{MapObserver, MultiMapObserver, StdMapObserver},
+    observers::{MultiMapObserver, StdErrObserver, StdMapObserver, StdOutObserver, TimeObserver},
     schedulers::QueueScheduler,
     stages::StdMutationalStage,
     state::StdState,
     Error, Fuzzer, StdFuzzer,
 };
+
+use shmem::{get_guard_num, make_shmem_persist};
 
 use libafl_bolts::{
     cli::parse_args,
@@ -37,8 +44,8 @@ use libafl_bolts::{
     AsSliceMut,
 };
 
-static UUTILS_PREFIX: &str = "./target/uutils_coreutils/target/release/";
-static GNU_PREFIX: &str = "./target/GNU_coreutils/src/";
+pub static UUTILS_PREFIX: &str = "./target/uutils_coreutils/target/release/";
+pub static GNU_PREFIX: &str = "./target/GNU_coreutils/src/";
 
 pub fn main() {
     let util = "base64";
@@ -107,18 +114,6 @@ fn fuzz(util: &str) -> Result<(), Error> {
                 ),
             ]
         };
-        // let combined_coverage2 = unsafe {
-        //     vec![
-        //         OwnedMutSlice::from_raw_parts_mut(
-        //             uutils_coverage_slice.as_mut_ptr(),
-        //             uutils_coverage_slice.len(),
-        //         ),
-        //         OwnedMutSlice::from_raw_parts_mut(
-        //             gnu_coverage_slice.as_mut_ptr(),
-        //             gnu_coverage_slice.len(),
-        //         ),
-        //     ]
-        // };
 
         let uutils_coverage_observer =
             unsafe { StdMapObserver::new("uutils-coverage", uutils_coverage_slice) };
@@ -127,28 +122,96 @@ fn fuzz(util: &str) -> Result<(), Error> {
 
         let combined_coverage_observer =
             MultiMapObserver::differential("combined-coverage", combined_coverage);
-        // let combined_coverage_observer2 =
-        //     MultiMapObserver::differential("combined-coverage2", combined_coverage2);
-        // let pseudo_feedback = PseudoPrintFeedback::new(
-        //     &options.stdout,
-        //     &combined_coverage_observer2,
-        //     Box::from(|_o: &MultiMapObserver<u8, true>| {
-        //         // format!("Combined byte count: {}\n", o.count_bytes())
-        //         String::from("")
-        //     }),
-        // );
+
+        let uutils_stdout_observer = StdOutObserver::new("uutils-stdout-observer");
+        let uutils_stderr_observer = StdErrObserver::new("uutils-stderr-observer");
+        let gnu_stdout_observer = StdOutObserver::new("gnu-stdout-observer");
+        let gnu_stderr_observer = StdErrObserver::new("gnu-stderr-observer");
+
+        let uutils_time_observer = TimeObserver::new("uutils-time-observer");
+        let gnu_time_observer = TimeObserver::new("gnu-time-observer");
+
+        let stdout_diff_feedback = DiffWithMetadataFeedback::new(
+            "stdout-diff-feedback",
+            &uutils_stdout_observer,
+            &gnu_stdout_observer,
+            |o| {
+                vec_string_mapper(&o.stdout)
+                    .replace(&uutils_path, "[libafl: util_path]")
+                    .to_owned()
+            },
+            |o| {
+                vec_string_mapper(&o.stdout)
+                    .replace(&gnu_path, "[libafl: util_path]")
+                    .to_owned()
+            },
+            |o1, o2| {
+                StdOutDiffMetadata::new(
+                    vec_string_mapper(&o1.stdout)
+                        .replace(&uutils_path, "[libafl: util_path]")
+                        .to_owned(),
+                    vec_string_mapper(&o2.stdout)
+                        .replace(&gnu_path, "[libafl: util_path]")
+                        .to_owned(),
+                )
+            },
+        )?;
+        let stderr_diff_feedback = DiffWithMetadataFeedback::new(
+            "stderr-diff-feedback",
+            &uutils_stderr_observer,
+            &gnu_stderr_observer,
+            |o| o.stderr.as_ref().map_or(false, |e| !e.is_empty()),
+            |o| o.stderr.as_ref().map_or(false, |e| !e.is_empty()),
+            |o1, o2| {
+                StdErrBinaryDiffMetadata::new(
+                    vec_string_mapper(&o1.stderr).to_owned(),
+                    vec_string_mapper(&o2.stderr).to_owned(),
+                )
+            },
+        )?;
 
         let mut feedback = feedback_or!(
             MaxMapFeedback::new(&combined_coverage_observer) // pseudo_feedback
         );
-        let uutils_observers = tuple_list!(uutils_coverage_observer);
-        let mut objective = feedback_or_fast!(TimeoutFeedback::new(), CrashFeedback::new());
+
+        let actual_objective = feedback_or_fast!(
+            stdout_diff_feedback,
+            stderr_diff_feedback,
+            CrashFeedback::new(),
+            TimeoutFeedback::new()
+        );
+        let pseudo_objective = feedback_or!(
+            InputLoggerFeedback::new("input-logger-feedback", |i: &Base64Input| {
+                InputMetadata::new(format!("input-logger-feedback: {}", i))
+            }),
+            TimeFeedback::new(&uutils_time_observer),
+            TimeFeedback::new(&gnu_time_observer),
+            ConstFeedback::new(true) // to ensure the whole block to be interesting
+        );
+
+        let mut objective = feedback_and!(actual_objective, pseudo_objective);
+
+        let uutils_observers = tuple_list!(
+            uutils_coverage_observer,
+            uutils_stdout_observer,
+            uutils_stderr_observer,
+            uutils_time_observer
+        );
+
+        let gnu_observers = tuple_list!(
+            gnu_coverage_observer,
+            gnu_stdout_observer,
+            gnu_stderr_observer,
+            gnu_time_observer
+        );
+
+        let combined_observers = tuple_list!(combined_coverage_observer);
 
         let mut state = state.unwrap_or_else(|| {
             StdState::new(
                 StdRand::with_seed(current_nanos()),
                 InMemoryCorpus::new(),
-                InMemoryOnDiskCorpus::new(PathBuf::from(&options.output)).unwrap(),
+                OnDiskCorpus::new(PathBuf::from(&options.output)).unwrap(),
                 &mut feedback,
                 &mut objective,
             )
@@ -167,16 +230,13 @@ fn fuzz(util: &str) -> Result<(), Error> {
 
         let gnu_executor = CoverageCommandExecutor::new(
             &gnu_coverage_shmem_description,
-            tuple_list!(gnu_coverage_observer),
+            gnu_observers,
             &gnu_path,
             format!("gnu-{:?}", core_id.0),
         );
 
-        let mut diff_executor = DiffExecutor::new(
-            uutils_executor,
-            gnu_executor,
-            tuple_list!(combined_coverage_observer),
-        );
+        let mut diff_executor =
+            DiffExecutor::new(uutils_executor, gnu_executor, combined_observers);
 
         if state.must_load_initial_inputs() {
             state.generate_initial_inputs(

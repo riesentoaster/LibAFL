@@ -70,8 +70,8 @@ where
             )
             .args(input.get_args())
             .arg(&self.shmem_coverage_description)
-            .stderr(Stdio::null())
-            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .stdout(Stdio::piped())
             .stdin(pseudo_pipe(input.get_stdin(), &self.temp_file_stdin_path)?);
 
         let child = command.spawn().expect("failed to start process");
