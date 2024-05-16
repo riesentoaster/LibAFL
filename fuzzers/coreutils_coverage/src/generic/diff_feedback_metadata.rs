@@ -10,35 +10,31 @@ use libafl::{
 };
 use libafl_bolts::{
     serdeany::SerdeAny,
-    tuples::{MatchNameRef, Reference, Referenceable},
+    tuples::{Handle, Handled, MatchNameRef},
     Named,
 };
 
 use std::{borrow::Cow, marker::PhantomData};
 
 /// A [`DiffWithMetadataFeedback`] behaves the same as a [`DiffFeedback`], except that it will also add the compared values as metadata in case of an interesting input.
-pub struct DiffWithMetadataFeedback<O1, O2, FE1, FE2, RE, FM, RM, I, S>
+pub struct DiffWithMetadataFeedback<O1, O2, FE, FM, RM, I, S>
 where
-    FE1: FnMut(&O1) -> RE,
-    FE2: FnMut(&O2) -> RE,
+    FE: FnMut(&O1, &O2) -> bool,
     FM: FnMut(&O1, &O2) -> RM,
     I: ToString,
 {
     name: Cow<'static, str>,
-    o1: Reference<O1>,
-    o2: Reference<O2>,
-    o1_extractor: FE1,
-    o2_extractor: FE2,
+    o1: Handle<O1>,
+    o2: Handle<O2>,
+    extractor: FE,
     mapper: FM,
     phantom: PhantomData<(I, S)>,
     is_interesting: bool,
 }
 
-impl<O1, O2, FE1, FE2, RE, FM, RM, I, S>
-    DiffWithMetadataFeedback<O1, O2, FE1, FE2, RE, FM, RM, I, S>
+impl<O1, O2, FE, FM, RM, I, S> DiffWithMetadataFeedback<O1, O2, FE, FM, RM, I, S>
 where
-    FE1: FnMut(&O1) -> RE,
-    FE2: FnMut(&O2) -> RE,
+    FE: FnMut(&O1, &O2) -> bool,
     FM: FnMut(&O1, &O2) -> RM,
     O1: Named,
     O2: Named,
@@ -49,12 +45,11 @@ where
         name: &'static str,
         o1: &O1,
         o2: &O2,
-        o1_extractor: FE1,
-        o2_extractor: FE2,
+        extractor: FE,
         mapper: FM,
     ) -> Result<Self, Error> {
-        let o1_ref = o1.reference();
-        let o2_ref = o2.reference();
+        let o1_ref = o1.handle();
+        let o2_ref = o2.handle();
         if o1_ref.name() == o2_ref.name() {
             Err(Error::illegal_argument(format!(
                 "DiffFeedback: observer names must be different (both were {})",
@@ -65,8 +60,7 @@ where
                 o1: o1_ref,
                 o2: o2_ref,
                 name: Cow::from(name),
-                o1_extractor,
-                o2_extractor,
+                extractor,
                 mapper,
                 is_interesting: false,
                 phantom: PhantomData,
@@ -75,14 +69,10 @@ where
     }
 }
 
-impl<O1, O2, FE1, FE2, RE, FM, RM, I, S> Feedback<S>
-    for DiffWithMetadataFeedback<O1, O2, FE1, FE2, RE, FM, RM, I, S>
+impl<O1, O2, FE, FM, RM, I, S> Feedback<S> for DiffWithMetadataFeedback<O1, O2, FE, FM, RM, I, S>
 where
-    FE1: FnMut(&O1) -> RE,
-    FE2: FnMut(&O2) -> RE,
-    RE: Eq,
+    FE: FnMut(&O1, &O2) -> bool,
     FM: FnMut(&O1, &O2) -> RM,
-
     RM: SerdeAny,
     I: Input + ToString,
     S: HasMetadata + State<Input = I>,
@@ -106,7 +96,7 @@ where
         }
         let o1: &O1 = observers.get(&self.o1).ok_or_else(|| err(self.o1.name()))?;
         let o2: &O2 = observers.get(&self.o2).ok_or_else(|| err(self.o2.name()))?;
-        let is_interesting = (self.o1_extractor)(o1) != (self.o2_extractor)(o2);
+        let is_interesting = (self.extractor)(o1, o2);
         self.is_interesting = is_interesting;
         Ok(is_interesting)
     }
@@ -136,11 +126,9 @@ where
     }
 }
 
-impl<O1, O2, FE1, FE2, RE, FM, RM, I, S> Named
-    for DiffWithMetadataFeedback<O1, O2, FE1, FE2, RE, FM, RM, I, S>
+impl<O1, O2, FE, FM, RM, I, S> Named for DiffWithMetadataFeedback<O1, O2, FE, FM, RM, I, S>
 where
-    FE1: FnMut(&O1) -> RE,
-    FE2: FnMut(&O2) -> RE,
+    FE: FnMut(&O1, &O2) -> bool,
     FM: FnMut(&O1, &O2) -> RM,
     I: ToString,
 {

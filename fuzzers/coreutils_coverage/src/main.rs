@@ -136,16 +136,7 @@ fn fuzz(util: &str) -> Result<(), Error> {
             "stdout-diff-feedback",
             &uutils_stdout_observer,
             &gnu_stdout_observer,
-            |o| {
-                vec_string_mapper(&o.stdout)
-                    .replace(&uutils_path, "[libafl: util_path]")
-                    .to_owned()
-            },
-            |o| {
-                vec_string_mapper(&o.stdout)
-                    .replace(&gnu_path, "[libafl: util_path]")
-                    .to_owned()
-            },
+            |o1, o2| o1.stdout == o2.stdout,
             |o1, o2| {
                 StdOutDiffMetadata::new(
                     vec_string_mapper(&o1.stdout)
@@ -163,8 +154,10 @@ fn fuzz(util: &str) -> Result<(), Error> {
             "stderr-diff-feedback",
             &uutils_stderr_observer,
             &gnu_stderr_observer,
-            |o| o.stderr.as_ref().map_or(false, |e| !e.is_empty()),
-            |o| o.stderr.as_ref().map_or(false, |e| !e.is_empty()),
+            |o1, o2| {
+                o1.stderr.as_ref().map_or(false, |e| !e.is_empty())
+                    == o2.stderr.as_ref().map_or(false, |e| !e.is_empty())
+            },
             |o1, o2| {
                 StdErrBinaryDiffMetadata::new(
                     vec_string_mapper(&o1.stderr).to_owned(),
@@ -185,6 +178,7 @@ fn fuzz(util: &str) -> Result<(), Error> {
             CrashFeedback::new(),
             TimeoutFeedback::new()
         );
+
         let pseudo_objective = feedback_or!(
             InputLoggerFeedback::new("input-logger-feedback", |i: &Base64Input| {
                 InputMetadata::new(format!("input-logger-feedback: {}", i))
