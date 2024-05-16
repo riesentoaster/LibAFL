@@ -18,7 +18,7 @@ use libafl::{
 
 use libafl_bolts::{prelude::Rand, HasLen, Named};
 
-use crate::{generic::ExtractsToCommand, metadata_structs::vec_string_mapper};
+use crate::generic::{executor::ExtractsToCommand, stdio::vec_string_mapper};
 
 /// An [`Input`] implementation for coreutils' `base64`
 #[derive(Serialize, Deserialize, Clone, Debug, Hash, SerdeAny)]

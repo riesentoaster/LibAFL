@@ -1,27 +1,27 @@
 mod base64;
 mod generic;
-mod metadata_structs;
-
-mod shmem;
 
 use std::path::{Path, PathBuf};
 
 use base64::{
-    Base64FlipDecodeMutator, Base64FlipIgnoreGarbageMutator, Base64Generator, Base64Input,
+    Base64FlipDecodeMutator, Base64FlipIgnoreGarbageMutator, Base64Generator,
     Base64WrapContentMutator,
 };
 
-use generic::{CoverageCommandExecutor, DiffWithMetadataFeedback, InputLoggerFeedback};
-use metadata_structs::{
-    vec_string_mapper, InputMetadata, StdErrBinaryDiffMetadata, StdOutDiffMetadata,
+use generic::{
+    executor::CoverageCommandExecutor,
+    shmem::{get_guard_num, make_shmem_persist},
+    stdio::DiffStdIOMetadataPseudoFeedback,
 };
-
 use libafl::{
     corpus::{InMemoryCorpus, OnDiskCorpus},
     events::{EventConfig, Launcher, LlmpRestartingEventManager},
     executors::DiffExecutor,
-    feedback_and, feedback_or, feedback_or_fast,
-    feedbacks::{ConstFeedback, CrashFeedback, MaxMapFeedback, TimeFeedback, TimeoutFeedback},
+    feedback_and, feedback_and_fast, feedback_or, feedback_or_fast,
+    feedbacks::{
+        differential::DiffResult, ConstFeedback, CrashFeedback, DiffFeedback, MaxMapFeedback,
+        TimeFeedback, TimeoutFeedback,
+    },
     monitors::tui::{ui::TuiUI, TuiMonitor},
     mutators::{havoc_mutations, StdScheduledMutator},
     observers::{MultiMapObserver, StdErrObserver, StdMapObserver, StdOutObserver, TimeObserver},
@@ -30,8 +30,6 @@ use libafl::{
     state::StdState,
     Error, Fuzzer, StdFuzzer,
 };
-
-use shmem::{get_guard_num, make_shmem_persist};
 
 use libafl_bolts::{
     cli::parse_args,
@@ -132,63 +130,70 @@ fn fuzz(util: &str) -> Result<(), Error> {
         let uutils_time_observer = TimeObserver::new("uutils-time-observer");
         let gnu_time_observer = TimeObserver::new("gnu-time-observer");
 
-        let stdout_diff_feedback = DiffWithMetadataFeedback::new(
-            "stdout-diff-feedback",
+        let stdout_diff_feedback = DiffFeedback::new(
+            "stdout-eq-diff-feedback",
             &uutils_stdout_observer,
             &gnu_stdout_observer,
-            |o1, o2| o1.stdout == o2.stdout,
             |o1, o2| {
-                StdOutDiffMetadata::new(
-                    vec_string_mapper(&o1.stdout)
-                        .replace(&uutils_path, "[libafl: util_path]")
-                        .to_owned(),
-                    vec_string_mapper(&o2.stdout)
-                        .replace(&gnu_path, "[libafl: util_path]")
-                        .to_owned(),
-                    uutils_path.to_string(),
-                    gnu_path.to_string(),
-                )
+                if o1.stdout != o2.stdout {
+                    DiffResult::Diff
+                } else {
+                    DiffResult::Equal
+                }
             },
         )?;
-        let stderr_diff_feedback = DiffWithMetadataFeedback::new(
-            "stderr-diff-feedback",
+
+        let stderr_diff_feedback = DiffFeedback::new(
+            "stderr-eq-diff-feedback",
             &uutils_stderr_observer,
             &gnu_stderr_observer,
             |o1, o2| {
-                o1.stderr.as_ref().map_or(false, |e| !e.is_empty())
-                    == o2.stderr.as_ref().map_or(false, |e| !e.is_empty())
-            },
-            |o1, o2| {
-                StdErrBinaryDiffMetadata::new(
-                    vec_string_mapper(&o1.stderr).to_owned(),
-                    vec_string_mapper(&o2.stderr).to_owned(),
-                    uutils_path.to_string(),
-                    gnu_path.to_string(),
-                )
+                if has_stderr(o1) != has_stderr(o2) {
+                    DiffResult::Diff
+                } else {
+                    DiffResult::Equal
+                }
             },
         )?;
 
-        let mut feedback = feedback_or!(
-            MaxMapFeedback::new(&combined_coverage_observer) // pseudo_feedback
-        );
+        let stderr_neither_feedback = DiffFeedback::new(
+            "stderr-neither-diff-feedback",
+            &uutils_stderr_observer,
+            &gnu_stderr_observer,
+            |o1, o2| {
+                if !has_stderr(o1) && !has_stderr(o2) {
+                    DiffResult::Diff // trigger the feedback
+                } else {
+                    DiffResult::Equal
+                }
+            },
+        )?;
 
-        let actual_objective = feedback_or_fast!(
-            stdout_diff_feedback,
-            stderr_diff_feedback,
-            CrashFeedback::new(),
-            TimeoutFeedback::new()
-        );
+        let mut feedback = MaxMapFeedback::new(&combined_coverage_observer);
 
-        let pseudo_objective = feedback_or!(
-            InputLoggerFeedback::new("input-logger-feedback", |i: &Base64Input| {
-                InputMetadata::new(format!("input-logger-feedback: {}", i))
-            }),
-            TimeFeedback::new(&uutils_time_observer),
-            TimeFeedback::new(&gnu_time_observer),
-            ConstFeedback::new(true) // to ensure the whole block to be interesting
+        // only add logger feedbacks if something was found
+        let mut objective = feedback_and!(
+            feedback_or_fast!(
+                // only test stdout equality if neither has a stderr
+                feedback_and_fast!(stderr_neither_feedback, stdout_diff_feedback),
+                stderr_diff_feedback,
+                CrashFeedback::new(),
+                TimeoutFeedback::new()
+            ),
+            feedback_or!(
+                DiffStdIOMetadataPseudoFeedback::new(
+                    &uutils_path,
+                    &gnu_path,
+                    &uutils_stderr_observer,
+                    &gnu_stderr_observer,
+                    &uutils_stdout_observer,
+                    &gnu_stdout_observer,
+                ),
+                TimeFeedback::new(&uutils_time_observer),
+                TimeFeedback::new(&gnu_time_observer),
+                ConstFeedback::new(true) // to ensure the whole block to be interesting
+            )
         );
-
-        let mut objective = feedback_and!(actual_objective, pseudo_objective);
 
         let uutils_observers = tuple_list!(
             uutils_coverage_observer,
@@ -270,4 +275,8 @@ fn fuzz(util: &str) -> Result<(), Error> {
         .remote_broker_addr(options.remote_broker_addr)
         .build()
         .launch()
+}
+
+pub fn has_stderr(o: &StdErrObserver) -> bool {
+    o.stderr.as_ref().map_or(false, |e| !e.is_empty())
 }
