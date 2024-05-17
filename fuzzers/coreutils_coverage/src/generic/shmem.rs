@@ -28,7 +28,7 @@ pub fn get_coverage_shmem_size(util: &str) -> Result<usize, Error> {
     println!("Got guard_num {} for util {}", guard_num, util);
     match guard_num {
         0 => Err(Error::illegal_state("Binary reported a guard count of 0")),
-        e => Ok((e + 7) / 8), // enough space for e bits
+        e => Ok(e),
     }
 }
 

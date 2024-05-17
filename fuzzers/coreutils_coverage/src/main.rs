@@ -25,7 +25,7 @@ use libafl::{
     monitors::tui::{ui::TuiUI, TuiMonitor},
     mutators::{havoc_mutations, StdScheduledMutator},
     observers::{MultiMapObserver, StdErrObserver, StdMapObserver, StdOutObserver, TimeObserver},
-    schedulers::QueueScheduler,
+    schedulers::{powersched::PowerSchedule, StdWeightedScheduler},
     stages::StdMutationalStage,
     state::StdState,
     Error, Fuzzer, StdFuzzer,
@@ -195,22 +195,6 @@ fn fuzz(util: &str) -> Result<(), Error> {
             )
         );
 
-        let uutils_observers = tuple_list!(
-            uutils_coverage_observer,
-            uutils_stdout_observer,
-            uutils_stderr_observer,
-            uutils_time_observer
-        );
-
-        let gnu_observers = tuple_list!(
-            gnu_coverage_observer,
-            gnu_stdout_observer,
-            gnu_stderr_observer,
-            gnu_time_observer
-        );
-
-        let combined_observers = tuple_list!(combined_coverage_observer);
-
         let mut state = state.unwrap_or_else(|| {
             StdState::new(
                 StdRand::with_seed(current_nanos()),
@@ -222,25 +206,43 @@ fn fuzz(util: &str) -> Result<(), Error> {
             .unwrap()
         });
 
-        let scheduler = QueueScheduler::new();
+        let scheduler = StdWeightedScheduler::with_schedule(
+            &mut state,
+            &combined_coverage_observer,
+            Some(PowerSchedule::FAST),
+        );
+
         let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
         let uutils_executor = CoverageCommandExecutor::new(
             &uutils_coverage_shmem_description,
-            uutils_observers,
+            tuple_list!(
+                uutils_coverage_observer,
+                uutils_stdout_observer,
+                uutils_stderr_observer,
+                uutils_time_observer
+            ),
             &uutils_path,
             format!("uutils-{:?}", core_id.0),
         );
 
         let gnu_executor = CoverageCommandExecutor::new(
             &gnu_coverage_shmem_description,
-            gnu_observers,
+            tuple_list!(
+                gnu_coverage_observer,
+                gnu_stdout_observer,
+                gnu_stderr_observer,
+                gnu_time_observer
+            ),
             &gnu_path,
             format!("gnu-{:?}", core_id.0),
         );
 
-        let mut diff_executor =
-            DiffExecutor::new(uutils_executor, gnu_executor, combined_observers);
+        let mut diff_executor = DiffExecutor::new(
+            uutils_executor,
+            gnu_executor,
+            tuple_list!(combined_coverage_observer),
+        );
 
         if state.must_load_initial_inputs() {
             state.generate_initial_inputs(
