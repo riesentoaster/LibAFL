@@ -1,7 +1,7 @@
 mod base64;
 mod generic;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use base64::{
     Base64FlipDecodeMutator, Base64FlipIgnoreGarbageMutator, Base64Generator,
@@ -10,21 +10,16 @@ use base64::{
 
 use generic::{
     executor::CoverageCommandExecutor,
-    shmem::{get_coverage_shmem_size, make_shmem_persist},
-    stdio::DiffStdIOMetadataPseudoFeedback,
+    shmem::{get_coverage_shmem_size, get_shmem},
 };
 use libafl::{
     corpus::{InMemoryCorpus, OnDiskCorpus},
     events::{EventConfig, Launcher, LlmpRestartingEventManager},
-    executors::DiffExecutor,
-    feedback_and, feedback_and_fast, feedback_or, feedback_or_fast,
-    feedbacks::{
-        differential::DiffResult, ConstFeedback, CrashFeedback, DiffFeedback, MaxMapFeedback,
-        TimeFeedback, TimeoutFeedback,
-    },
+    feedback_or_fast,
+    feedbacks::{CrashFeedback, MaxMapFeedback, TimeoutFeedback},
     monitors::tui::{ui::TuiUI, TuiMonitor},
     mutators::{havoc_mutations, StdScheduledMutator},
-    observers::{MultiMapObserver, StdErrObserver, StdMapObserver, StdOutObserver, TimeObserver},
+    observers::{StdErrObserver, StdMapObserver, StdOutObserver, TimeObserver},
     schedulers::{powersched::PowerSchedule, StdWeightedScheduler},
     stages::StdMutationalStage,
     state::StdState,
@@ -35,14 +30,27 @@ use libafl_bolts::{
     cli::parse_args,
     core_affinity::CoreId,
     current_nanos,
-    ownedref::OwnedMutSlice,
     rands::StdRand,
-    shmem::{MmapShMemProvider, ShMem, ShMemProvider, StdShMemProvider},
+    shmem::{ShMemProvider, StdShMemProvider},
     tuples::{tuple_list, Append},
     AsSliceMut,
 };
 
+#[cfg(feature = "differential")]
+use generic::stdio::DiffStdIOMetadataPseudoFeedback;
+#[cfg(feature = "differential")]
+use libafl::{
+    executors::DiffExecutor,
+    feedback_and, feedback_and_fast, feedback_or,
+    feedbacks::{differential::DiffResult, ConstFeedback, DiffFeedback, TimeFeedback},
+    observers::MultiMapObserver,
+};
+#[cfg(feature = "differential")]
+use libafl_bolts::ownedref::OwnedMutSlice;
+
+#[cfg(feature = "uutils")]
 pub static UUTILS_PREFIX: &str = "./target/uutils_coreutils/target/release/";
+#[cfg(feature = "gnu")]
 pub static GNU_PREFIX: &str = "./target/GNU_coreutils/src/";
 
 pub fn main() {
@@ -59,142 +67,150 @@ pub fn main() {
 }
 
 fn fuzz(util: &str) -> Result<(), Error> {
-    let uutils_path = format!("{UUTILS_PREFIX}{util}");
-    let gnu_path = format!("{GNU_PREFIX}{util}");
-    if !Path::new(&uutils_path).exists() {
-        return Err(Error::illegal_argument(format!(
-            "Util {util} not found in prefix {UUTILS_PREFIX}"
-        )));
-    }
-    if !Path::new(&gnu_path).exists() {
-        return Err(Error::illegal_argument(format!(
-            "Util {util} not found in prefix {GNU_PREFIX}"
-        )));
-    }
-
     let options = parse_args();
-
-    // let monitor = MultiMonitor::new(|s| println!("{s}"));
     let monitor = TuiMonitor::new(TuiUI::new("coreutils fuzzer".to_string(), true));
 
-    let uutils_coverage_shmem_size = get_coverage_shmem_size(&uutils_path)?;
-    let gnu_coverage_shmem_size = get_coverage_shmem_size(&gnu_path)?;
-
-    let mut shmem_provider = MmapShMemProvider::default();
+    #[cfg(feature = "uutils")]
+    let (uutils_coverage_shmem_size, uutils_path) =
+        get_coverage_shmem_size(format!("{UUTILS_PREFIX}{util}"))?;
+    #[cfg(feature = "gnu")]
+    let (gnu_coverage_shmem_size, gnu_path) =
+        get_coverage_shmem_size(format!("{GNU_PREFIX}{util}"))?;
 
     let run_client = |state: Option<_>,
                       mut mgr: LlmpRestartingEventManager<_, _, _>,
                       core_id: CoreId|
      -> Result<(), Error> {
-        let mut uutils_coverage_shmem = shmem_provider
-            .new_shmem(uutils_coverage_shmem_size)
-            .expect("Could not get the shared memory map");
-        let mut gnu_coverage_shmem = shmem_provider
-            .new_shmem(gnu_coverage_shmem_size)
-            .expect("Could not get the shared memory map");
+        #[cfg(feature = "uutils")]
+        let (mut uutils_coverage_shmem, uutils_coverage_shmem_description) =
+            get_shmem(uutils_coverage_shmem_size)?;
 
-        let uutils_coverage_shmem_description = uutils_coverage_shmem.description();
-        let gnu_coverage_shmem_description = gnu_coverage_shmem.description();
-        make_shmem_persist(&uutils_coverage_shmem_description)?;
-        make_shmem_persist(&gnu_coverage_shmem_description)?;
+        #[cfg(feature = "gnu")]
+        let (mut gnu_coverage_shmem, gnu_coverage_shmem_description) =
+            get_shmem(gnu_coverage_shmem_size)?;
 
-        let uutils_coverage_slice = uutils_coverage_shmem.as_slice_mut();
-        let gnu_coverage_slice = gnu_coverage_shmem.as_slice_mut();
+        #[cfg(feature = "differential")]
+        let combined_coverage_observer =
+            MultiMapObserver::differential("combined-coverage", unsafe {
+                vec![
+                    OwnedMutSlice::from_raw_parts_mut(
+                        uutils_coverage_shmem.as_mut_ptr(),
+                        uutils_coverage_shmem.len(),
+                    ),
+                    OwnedMutSlice::from_raw_parts_mut(
+                        gnu_coverage_shmem.as_mut_ptr(),
+                        gnu_coverage_shmem.len(),
+                    ),
+                ]
+            });
 
-        let combined_coverage = unsafe {
-            vec![
-                OwnedMutSlice::from_raw_parts_mut(
-                    uutils_coverage_slice.as_mut_ptr(),
-                    uutils_coverage_slice.len(),
-                ),
-                OwnedMutSlice::from_raw_parts_mut(
-                    gnu_coverage_slice.as_mut_ptr(),
-                    gnu_coverage_slice.len(),
-                ),
-            ]
+        #[cfg(feature = "uutils")]
+        let uutils_stdout_observer = StdOutObserver::new("uutils-stdout-observer");
+        #[cfg(feature = "uutils")]
+        let uutils_stderr_observer = StdErrObserver::new("uutils-stderr-observer");
+        #[cfg(feature = "uutils")]
+        let uutils_time_observer = TimeObserver::new("uutils-time-observer");
+        #[cfg(feature = "uutils")]
+        let uutils_coverage_observer = unsafe {
+            StdMapObserver::new(
+                "uutils-coverage-observer",
+                uutils_coverage_shmem.as_slice_mut(),
+            )
         };
 
-        let uutils_coverage_observer =
-            unsafe { StdMapObserver::new("uutils-coverage", uutils_coverage_slice) };
-
-        let gnu_coverage_observer =
-            unsafe { StdMapObserver::new("gnu-coverage", gnu_coverage_slice) };
-        let combined_coverage_observer =
-            MultiMapObserver::differential("combined-coverage", combined_coverage);
-
-        let uutils_stdout_observer = StdOutObserver::new("uutils-stdout-observer");
-        let uutils_stderr_observer = StdErrObserver::new("uutils-stderr-observer");
+        #[cfg(feature = "gnu")]
         let gnu_stdout_observer = StdOutObserver::new("gnu-stdout-observer");
+        #[cfg(feature = "gnu")]
         let gnu_stderr_observer = StdErrObserver::new("gnu-stderr-observer");
-
-        let uutils_time_observer = TimeObserver::new("uutils-time-observer");
+        #[cfg(feature = "gnu")]
         let gnu_time_observer = TimeObserver::new("gnu-time-observer");
+        #[cfg(feature = "gnu")]
+        let gnu_coverage_observer = unsafe {
+            StdMapObserver::new("gnu-coverage-observer", gnu_coverage_shmem.as_slice_mut())
+        };
 
-        let stdout_diff_feedback = DiffFeedback::new(
-            "stdout-eq-diff-feedback",
-            &uutils_stdout_observer,
-            &gnu_stdout_observer,
-            |o1, o2| {
-                if o1.stdout != o2.stdout {
-                    DiffResult::Diff
-                } else {
-                    DiffResult::Equal
-                }
-            },
-        )?;
+        #[cfg(feature = "differential")]
+        let (mut feedback, mut objective) = (|| -> Result<_, Error> {
+            let stdout_diff_feedback = DiffFeedback::new(
+                "stdout-eq-diff-feedback",
+                &uutils_stdout_observer,
+                &gnu_stdout_observer,
+                |o1, o2| {
+                    if o1.stdout != o2.stdout {
+                        DiffResult::Diff
+                    } else {
+                        DiffResult::Equal
+                    }
+                },
+            )?;
 
-        let stderr_diff_feedback = DiffFeedback::new(
-            "stderr-eq-diff-feedback",
-            &uutils_stderr_observer,
-            &gnu_stderr_observer,
-            |o1, o2| {
-                if has_stderr(o1) != has_stderr(o2) {
-                    DiffResult::Diff
-                } else {
-                    DiffResult::Equal
-                }
-            },
-        )?;
+            let stderr_diff_feedback = DiffFeedback::new(
+                "stderr-eq-diff-feedback",
+                &uutils_stderr_observer,
+                &gnu_stderr_observer,
+                |o1, o2| {
+                    if has_stderr(o1) != has_stderr(o2) {
+                        DiffResult::Diff
+                    } else {
+                        DiffResult::Equal
+                    }
+                },
+            )?;
 
-        let stderr_neither_feedback = DiffFeedback::new(
-            "stderr-neither-diff-feedback",
-            &uutils_stderr_observer,
-            &gnu_stderr_observer,
-            |o1, o2| {
-                if !has_stderr(o1) && !has_stderr(o2) {
-                    DiffResult::Diff // trigger the feedback
-                } else {
-                    DiffResult::Equal
-                }
-            },
-        )?;
+            let stderr_neither_feedback = DiffFeedback::new(
+                "stderr-neither-diff-feedback",
+                &uutils_stderr_observer,
+                &gnu_stderr_observer,
+                |o1, o2| {
+                    if !has_stderr(o1) && !has_stderr(o2) {
+                        DiffResult::Diff // trigger the feedback
+                    } else {
+                        DiffResult::Equal
+                    }
+                },
+            )?;
 
-        let mut feedback = MaxMapFeedback::new(&combined_coverage_observer);
+            let feedback = MaxMapFeedback::new(&combined_coverage_observer);
 
-        // only add logger feedbacks if something was found
-        let mut objective = feedback_and!(
-            feedback_or_fast!(
-                // only test stdout equality if neither has a stderr
-                feedback_and_fast!(stderr_neither_feedback, stdout_diff_feedback),
-                stderr_diff_feedback,
-                CrashFeedback::new(),
-                TimeoutFeedback::new()
-            ),
-            feedback_or!(
-                DiffStdIOMetadataPseudoFeedback::new(
-                    &uutils_path,
-                    &gnu_path,
-                    &uutils_stderr_observer,
-                    &gnu_stderr_observer,
-                    &uutils_stdout_observer,
-                    &gnu_stdout_observer,
+            // only add logger feedbacks if something was found
+            let objective = feedback_and!(
+                feedback_or_fast!(
+                    // only test stdout equality if neither has a stderr
+                    feedback_and_fast!(stderr_neither_feedback, stdout_diff_feedback),
+                    stderr_diff_feedback,
+                    CrashFeedback::new(),
+                    TimeoutFeedback::new()
                 ),
-                TimeFeedback::new(&uutils_time_observer),
-                TimeFeedback::new(&gnu_time_observer),
-                ConstFeedback::new(true) // to ensure the whole block to be interesting
-            )
-        );
+                feedback_or!(
+                    DiffStdIOMetadataPseudoFeedback::new(
+                        &uutils_path,
+                        &gnu_path,
+                        &uutils_stderr_observer,
+                        &gnu_stderr_observer,
+                        &uutils_stdout_observer,
+                        &gnu_stdout_observer,
+                    ),
+                    TimeFeedback::new(&uutils_time_observer),
+                    TimeFeedback::new(&gnu_time_observer),
+                    ConstFeedback::new(true) // to ensure the whole block to be interesting
+                )
+            );
 
+            Ok((feedback, objective))
+        })()?;
+
+        #[cfg(all(not(feature = "differential"), feature = "gnu"))]
+        let (mut feedback, mut objective) = {
+            let feedback = MaxMapFeedback::new(&gnu_coverage_observer);
+            let objective = feedback_or_fast!(CrashFeedback::new(), TimeoutFeedback::new());
+            (feedback, objective)
+        };
+        #[cfg(all(not(feature = "differential"), feature = "uutils"))]
+        let (mut feedback, mut objective) = {
+            let feedback = MaxMapFeedback::new(&uutils_coverage_observer);
+            let objective = feedback_or_fast!(CrashFeedback::new(), TimeoutFeedback::new());
+            (feedback, objective)
+        };
         let mut state = state.unwrap_or_else(|| {
             StdState::new(
                 StdRand::with_seed(current_nanos()),
@@ -208,12 +224,17 @@ fn fuzz(util: &str) -> Result<(), Error> {
 
         let scheduler = StdWeightedScheduler::with_schedule(
             &mut state,
+            #[cfg(feature = "differential")]
             &combined_coverage_observer,
+            #[cfg(all(not(feature = "differential"), feature = "uutils"))]
+            &uutils_coverage_observer,
+            #[cfg(all(not(feature = "differential"), feature = "gnu"))]
+            &gnu_coverage_observer,
             Some(PowerSchedule::FAST),
         );
 
         let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
-
+        #[cfg(feature = "uutils")]
         let uutils_executor = CoverageCommandExecutor::new(
             &uutils_coverage_shmem_description,
             tuple_list!(
@@ -226,6 +247,7 @@ fn fuzz(util: &str) -> Result<(), Error> {
             format!("uutils-{:?}", core_id.0),
         );
 
+        #[cfg(feature = "gnu")]
         let gnu_executor = CoverageCommandExecutor::new(
             &gnu_coverage_shmem_description,
             tuple_list!(
@@ -238,16 +260,23 @@ fn fuzz(util: &str) -> Result<(), Error> {
             format!("gnu-{:?}", core_id.0),
         );
 
-        let mut diff_executor = DiffExecutor::new(
+        #[cfg(feature = "differential")]
+        let diff_executor = DiffExecutor::new(
             uutils_executor,
             gnu_executor,
             tuple_list!(combined_coverage_observer),
         );
+        #[cfg(feature = "differential")]
+        let mut executor = diff_executor;
+        #[cfg(all(not(feature = "differential"), feature = "uutils"))]
+        let mut executor = uutils_executor;
+        #[cfg(all(not(feature = "differential"), feature = "gnu"))]
+        let mut executor = gnu_executor;
 
         if state.must_load_initial_inputs() {
             state.generate_initial_inputs(
                 &mut fuzzer,
-                &mut diff_executor,
+                &mut executor,
                 &mut Base64Generator::new(8),
                 &mut mgr,
                 8,
@@ -261,7 +290,7 @@ fn fuzz(util: &str) -> Result<(), Error> {
                 .append(Base64WrapContentMutator)
         )));
 
-        fuzzer.fuzz_loop(&mut stages, &mut diff_executor, &mut state, &mut mgr)
+        fuzzer.fuzz_loop(&mut stages, &mut executor, &mut state, &mut mgr)
     };
 
     let launcher_shmem_provider = StdShMemProvider::new()?;

@@ -11,10 +11,14 @@ use libafl::{
     Error, HasMetadata, SerdeAny,
 };
 use libafl_bolts::{
-    tuples::{Handle, Handled, MatchNameRef},
+    tuples::{Handle, MatchNameRef},
     Named,
 };
+
 use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "differential")]
+use libafl_bolts::tuples::Handled;
 
 pub struct DiffStdIOMetadataPseudoFeedback {
     name1: Cow<'static, str>,
@@ -26,6 +30,7 @@ pub struct DiffStdIOMetadataPseudoFeedback {
 }
 
 impl DiffStdIOMetadataPseudoFeedback {
+    #[cfg(feature = "differential")]
     pub fn new(
         name1: &str,
         name2: &str,

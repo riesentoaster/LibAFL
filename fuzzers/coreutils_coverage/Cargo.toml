@@ -14,6 +14,12 @@ members = ["get_guard_num", "setup_guard_redirection"]
 # opt-level = 3
 debug = true
 
+[features]
+default = ["differential"]
+gnu = []
+uutils = []
+differential = ["gnu", "uutils"]
+
 [dependencies]
 libafl = { path = "../../libafl/", features = [
     "cli",

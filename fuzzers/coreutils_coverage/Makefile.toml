@@ -124,9 +124,37 @@ script = '''
 cargo build --profile ${PROFILE}
 '''
 
+[tasks.fuzzer_gnu]
+dependencies = ["coreutils_bin", "preloads"]
+script_runner = "@shell"
+script = '''
+cargo build --profile ${PROFILE} --no-default-features --features gnu
+'''
+
+[tasks.fuzzer_uutils]
+dependencies = ["coreutils_bin", "preloads"]
+script_runner = "@shell"
+script = '''
+cargo build --profile ${PROFILE} --no-default-features --features uutils
+'''
+
 [tasks.run]
 dependencies = ["fuzzer"]
 script_runner = "@shell"
 script = '''
-./target/release/coreutils --output crashes ${@}
+./target/release/coreutils --output crashes --stdout out.log ${@}
+'''
+
+[tasks.run_gnu]
+dependencies = ["fuzzer_gnu"]
+script_runner = "@shell"
+script = '''
+./target/release/coreutils --output crashes --stdout out.log ${@}
+'''
+
+[tasks.run_uutils]
+dependencies = ["fuzzer_uutils"]
+script_runner = "@shell"
+script = '''
+./target/release/coreutils --output crashes --stdout out.log ${@}
 '''
