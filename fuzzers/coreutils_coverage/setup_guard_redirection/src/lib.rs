@@ -94,7 +94,7 @@ fn log<T: Debug>(s: T) {
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
-                    .as_secs(),
+                    .as_millis(),
                 s
             )
             .as_bytes(),
@@ -109,14 +109,34 @@ unsafe fn write_guards() {
         let mut shmem = MmapShMemProvider::default()
             .shmem_from_description(shmem_description)
             .expect("Could not acquire shared memory");
-        let shmem_target = shmem.as_slice_mut();
+        let get_guard_count: fn() -> usize = get_symbol(c"get_guard_count", true);
+        let guard_count = get_guard_count();
+        let shmem_len = shmem.len();
+        if shmem_len < (guard_count + 7) / 8 || shmem_len > guard_count / 8 + 1 {
+            log(format!(
+                "Memory sizes don't match. shmem: {}, guards: {}",
+                shmem.len(),
+                (guard_count + 7) / 8
+            ));
+        } else {
+            let shmem_target = shmem.as_slice_mut();
 
-        let get_guard_values: fn() -> *const u8 = get_symbol(c"get_guard_values", true);
-        let guards = get_guard_values();
-
-        let guard_slice = slice::from_raw_parts(guards, shmem_description.size);
-
-        shmem_target.clone_from_slice(guard_slice);
+            let get_guard_values: fn() -> *const i32 = get_symbol(c"get_guard_values", true);
+            let guards = get_guard_values();
+            let guard_slice = slice::from_raw_parts(guards, guard_count);
+            for (i, e) in guard_slice.iter().enumerate() {
+                let bit = (e & 0x1) as u8;
+                let byte_offset = i % 8;
+                let index_offset = i / 8;
+                shmem_target[index_offset] |= bit << byte_offset;
+            }
+            // set unreachable filler bits
+            for i in guard_slice.len()..(shmem_target.len() * 8) {
+                let byte_offset = i % 8;
+                let index_offset = i / 8;
+                shmem_target[index_offset] |= 1 << byte_offset;
+            }
+        }
     }));
 
     if let Err(e) = result {

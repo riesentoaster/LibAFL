@@ -10,7 +10,7 @@ use base64::{
 
 use generic::{
     executor::CoverageCommandExecutor,
-    shmem::{get_guard_num, make_shmem_persist},
+    shmem::{get_coverage_shmem_size, make_shmem_persist},
     stdio::DiffStdIOMetadataPseudoFeedback,
 };
 use libafl::{
@@ -77,8 +77,8 @@ fn fuzz(util: &str) -> Result<(), Error> {
     // let monitor = MultiMonitor::new(|s| println!("{s}"));
     let monitor = TuiMonitor::new(TuiUI::new("coreutils fuzzer".to_string(), true));
 
-    let uutils_guard_num = get_guard_num(&uutils_path)?;
-    let gnu_guard_num = get_guard_num(&gnu_path)?;
+    let uutils_coverage_shmem_size = get_coverage_shmem_size(&uutils_path)?;
+    let gnu_coverage_shmem_size = get_coverage_shmem_size(&gnu_path)?;
 
     let mut shmem_provider = MmapShMemProvider::default();
 
@@ -87,10 +87,10 @@ fn fuzz(util: &str) -> Result<(), Error> {
                       core_id: CoreId|
      -> Result<(), Error> {
         let mut uutils_coverage_shmem = shmem_provider
-            .new_shmem(uutils_guard_num * 4)
+            .new_shmem(uutils_coverage_shmem_size)
             .expect("Could not get the shared memory map");
         let mut gnu_coverage_shmem = shmem_provider
-            .new_shmem(gnu_guard_num * 4)
+            .new_shmem(gnu_coverage_shmem_size)
             .expect("Could not get the shared memory map");
 
         let uutils_coverage_shmem_description = uutils_coverage_shmem.description();
@@ -116,9 +116,9 @@ fn fuzz(util: &str) -> Result<(), Error> {
 
         let uutils_coverage_observer =
             unsafe { StdMapObserver::new("uutils-coverage", uutils_coverage_slice) };
+
         let gnu_coverage_observer =
             unsafe { StdMapObserver::new("gnu-coverage", gnu_coverage_slice) };
-
         let combined_coverage_observer =
             MultiMapObserver::differential("combined-coverage", combined_coverage);
 

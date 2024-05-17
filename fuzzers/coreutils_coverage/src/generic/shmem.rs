@@ -4,7 +4,7 @@ use libafl::Error;
 use libafl_bolts::shmem::ShMemDescription;
 use libc::{fcntl, FD_CLOEXEC, F_GETFD, F_SETFD};
 
-pub fn get_guard_num(util: &str) -> Result<usize, Error> {
+pub fn get_coverage_shmem_size(util: &str) -> Result<usize, Error> {
     if !Path::new(util).exists() {
         return Err(Error::illegal_state(
             "Missing util binary. Check Makefile.toml for the appropriate target.",
@@ -28,7 +28,7 @@ pub fn get_guard_num(util: &str) -> Result<usize, Error> {
     println!("Got guard_num {} for util {}", guard_num, util);
     match guard_num {
         0 => Err(Error::illegal_state("Binary reported a guard count of 0")),
-        e => Ok(e),
+        e => Ok((e + 7) / 8), // enough space for e bits
     }
 }
 
