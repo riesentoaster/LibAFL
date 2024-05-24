@@ -1,9 +1,10 @@
 use std::{
     borrow::Cow,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::File,
     io::Write,
     marker::PhantomData,
+    os::unix::ffi::OsStrExt,
     process::{Child, Command, Stdio},
     time::Duration,
 };
@@ -96,4 +97,14 @@ fn pseudo_pipe(data: &[u8], path: &str) -> Result<File, Error> {
         .write_all(data)
         .map_err(|e| Error::os_error(e, "Could not write data to temp file"))?;
     File::open(path).map_err(|e| Error::os_error(e, "Could not open temp file again"))
+}
+
+pub fn arg_from_vec(arg: &[u8]) -> OsString {
+    OsStr::from_bytes(
+        &arg.iter()
+            .filter(|&e| (*e != 0))
+            .copied()
+            .collect::<Vec<_>>(),
+    )
+    .to_os_string()
 }

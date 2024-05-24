@@ -19,14 +19,10 @@ default = ["differential"]
 gnu = []
 uutils = []
 differential = ["gnu", "uutils"]
+introspection = ["libafl/scalability_introspection", "libafl/introspection"]
 
 [dependencies]
-libafl = { path = "../../libafl/", features = [
-    "cli",
-    "errors_backtrace",
-    # "introspection",
-    # "scalability_introspection",
-] }
+libafl = { path = "../../libafl/", features = ["cli", "errors_backtrace"] }
 libafl_bolts = { path = "../../libafl_bolts/" }
 libc = "0.2"
 serde = { version = "1.0.199", features = ["derive"] }

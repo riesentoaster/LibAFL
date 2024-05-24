@@ -3,10 +3,7 @@ mod generic;
 
 use std::path::PathBuf;
 
-use base64::{
-    Base64FlipDecodeMutator, Base64FlipIgnoreGarbageMutator, Base64Generator,
-    Base64WrapContentMutator,
-};
+use base64::{base64_mutators, Base64Generator};
 
 use generic::{
     executor::CoverageCommandExecutor,
@@ -17,8 +14,7 @@ use libafl::{
     events::{EventConfig, Launcher, LlmpRestartingEventManager},
     feedback_or_fast,
     feedbacks::{CrashFeedback, MaxMapFeedback, TimeoutFeedback},
-    monitors::tui::{ui::TuiUI, TuiMonitor},
-    mutators::{havoc_mutations, StdScheduledMutator},
+    mutators::StdScheduledMutator,
     observers::{StdErrObserver, StdMapObserver, StdOutObserver, TimeObserver},
     schedulers::{powersched::PowerSchedule, StdWeightedScheduler},
     stages::StdMutationalStage,
@@ -32,21 +28,26 @@ use libafl_bolts::{
     current_nanos,
     rands::StdRand,
     shmem::{ShMemProvider, StdShMemProvider},
-    tuples::{tuple_list, Append},
+    tuples::tuple_list,
     AsSliceMut,
 };
 
 #[cfg(feature = "differential")]
-use generic::stdio::DiffStdIOMetadataPseudoFeedback;
-#[cfg(feature = "differential")]
-use libafl::{
-    executors::DiffExecutor,
-    feedback_and, feedback_and_fast, feedback_or,
-    feedbacks::{differential::DiffResult, ConstFeedback, DiffFeedback, TimeFeedback},
-    observers::MultiMapObserver,
+use {
+    generic::stdio::DiffStdIOMetadataPseudoFeedback,
+    libafl::{
+        executors::DiffExecutor,
+        feedback_and, feedback_and_fast, feedback_or,
+        feedbacks::{differential::DiffResult, ConstFeedback, DiffFeedback, TimeFeedback},
+        observers::MultiMapObserver,
+    },
+    libafl_bolts::ownedref::OwnedMutSlice,
 };
-#[cfg(feature = "differential")]
-use libafl_bolts::ownedref::OwnedMutSlice;
+
+#[cfg(not(feature = "introspection"))]
+use libafl::monitors::tui::{ui::TuiUI, TuiMonitor};
+#[cfg(feature = "introspection")]
+use libafl::monitors::MultiMonitor;
 
 #[cfg(feature = "uutils")]
 pub static UUTILS_PREFIX: &str = "./target/uutils_coreutils/target/release/";
@@ -68,6 +69,10 @@ pub fn main() {
 
 fn fuzz(util: &str) -> Result<(), Error> {
     let options = parse_args();
+
+    #[cfg(feature = "introspection")]
+    let monitor = MultiMonitor::new(|s| println!("{}", s));
+    #[cfg(not(feature = "introspection"))]
     let monitor = TuiMonitor::new(TuiUI::new("coreutils fuzzer".to_string(), true));
 
     #[cfg(feature = "uutils")]
@@ -277,17 +282,14 @@ fn fuzz(util: &str) -> Result<(), Error> {
             state.generate_initial_inputs(
                 &mut fuzzer,
                 &mut executor,
-                &mut Base64Generator::new(8),
+                &mut Base64Generator::new(8, 2),
                 &mut mgr,
                 8,
             )?
         }
 
         let mut stages = tuple_list!(StdMutationalStage::new(StdScheduledMutator::new(
-            havoc_mutations()
-                .append(Base64FlipDecodeMutator)
-                .append(Base64FlipIgnoreGarbageMutator)
-                .append(Base64WrapContentMutator)
+            base64_mutators()
         )));
 
         fuzzer.fuzz_loop(&mut stages, &mut executor, &mut state, &mut mgr)
