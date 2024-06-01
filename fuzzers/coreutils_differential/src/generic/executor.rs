@@ -90,7 +90,7 @@ where
 /// # Errors on
 ///
 /// This function will return an error if the underlying os functions error.
-fn pseudo_pipe(data: &[u8], path: &str) -> Result<File, Error> {
+pub fn pseudo_pipe(data: &[u8], path: &str) -> Result<File, Error> {
     File::create(path)
         .map_err(|e| Error::os_error(e, "Could not create temp file"))?
         .write_all(data)

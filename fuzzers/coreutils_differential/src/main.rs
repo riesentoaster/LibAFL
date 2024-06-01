@@ -6,14 +6,17 @@ use std::path::PathBuf;
 use base64::{base64_mutators, Base64Generator};
 
 use generic::{
+    cov_feedback::CovFeedback,
     executor::CoverageCommandExecutor,
     shmem::{get_coverage_shmem_size, get_shmem},
 };
+
 use libafl::{
     corpus::{InMemoryCorpus, OnDiskCorpus},
     events::{EventConfig, Launcher, LlmpRestartingEventManager},
     feedback_or_fast,
     feedbacks::{CrashFeedback, DiffExitKindFeedback, MaxMapFeedback, TimeoutFeedback},
+    monitors::MultiMonitor,
     mutators::StdScheduledMutator,
     observers::{StdErrObserver, StdMapObserver, StdOutObserver, TimeObserver},
     schedulers::{powersched::PowerSchedule, StdScheduler, StdWeightedScheduler},
@@ -53,6 +56,8 @@ use libafl::monitors::MultiMonitor;
 pub static UUTILS_PREFIX: &str = "./target/uutils_coreutils/target/release/";
 #[cfg(feature = "gnu")]
 pub static GNU_PREFIX: &str = "./target/GNU_coreutils/src/";
+#[cfg(feature = "gnu")]
+pub static GNU_GCOV_PREFIX: &str = "./target/GNU_coreutils_coverage/src/";
 
 pub fn main() {
     let util = "base64";
@@ -72,8 +77,9 @@ fn fuzz(util: &str) -> Result<(), Error> {
 
     #[cfg(feature = "introspection")]
     let monitor = MultiMonitor::new(|s| println!("{}", s));
-    #[cfg(not(feature = "introspection"))]
-    let monitor = TuiMonitor::new(TuiUI::new("coreutils fuzzer".to_string(), true));
+    let monitor = MultiMonitor::new(|s| println!("{}", s));
+    // #[cfg(not(feature = "introspection"))]
+    // let monitor = TuiMonitor::new(TuiUI::new("coreutils fuzzer".to_string(), true));
 
     #[cfg(feature = "uutils")]
     let (uutils_coverage_shmem_size, uutils_path) =
@@ -175,7 +181,16 @@ fn fuzz(util: &str) -> Result<(), Error> {
                 },
             )?;
 
-            let feedback = MaxMapFeedback::new(&combined_coverage_observer);
+            let gcov_feedback = CovFeedback::new(
+                true,
+                format!("{GNU_GCOV_PREFIX}{util}"),
+                format!("cov-{:?}", core_id.0),
+            );
+
+            let feedback = feedback_and_fast!(
+                MaxMapFeedback::new(&combined_coverage_observer),
+                gcov_feedback
+            );
 
             // only add logger feedbacks if something was found
             let objective = feedback_and!(
@@ -207,7 +222,13 @@ fn fuzz(util: &str) -> Result<(), Error> {
 
         #[cfg(all(not(feature = "differential"), feature = "gnu"))]
         let (mut feedback, mut objective) = {
-            let feedback = MaxMapFeedback::new(&gnu_coverage_observer);
+            let gcov_feedback = CovFeedback::new(
+                true,
+                format!("{GNU_GCOV_PREFIX}{util}"),
+                format!("cov-{:?}", core_id.0),
+            );
+            let feedback =
+                feedback_and_fast!(MaxMapFeedback::new(&gnu_coverage_observer), gcov_feedback);
             let objective = feedback_or_fast!(CrashFeedback::new(), TimeoutFeedback::new());
             (feedback, objective)
         };
@@ -238,7 +259,6 @@ fn fuzz(util: &str) -> Result<(), Error> {
             &gnu_coverage_observer,
             Some(PowerSchedule::FAST),
         );
-        // let scheduler = StdScheduler::new();
 
         let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
         #[cfg(feature = "uutils")]
