@@ -79,7 +79,7 @@ impl<C, E, EM, I, O, S, Z> Stage<E, EM, S, Z> for ColorizationStage<C, E, EM, I,
 where
     EM: EventFirer<I, S>,
     Z: HasObjective,
-    E: HasObservers + Executor<EM, I, Z::Objective, S>,
+    E: HasObservers + Executor<I, S>,
     S: HasCorpus<I> + HasMetadata + HasRand + HasNamedMetadata + HasCurrentCorpusId,
     E::Observers: ObserversTuple<I, S>,
     I: ResizableMutator<u8> + HasMutatorBytes + Clone,
@@ -89,13 +89,13 @@ where
     #[inline]
     fn perform(
         &mut self,
-        fuzzer: &mut Z,
+        _fuzzer: &mut Z,
         executor: &mut E, // don't need the *main* executor for tracing
         state: &mut S,
-        manager: &mut EM,
+        _manager: &mut EM,
     ) -> Result<(), Error> {
         // Run with the mutated input
-        Self::colorize(fuzzer, executor, state, manager, &self.map_observer_handle)?;
+        Self::colorize(executor, state, &self.map_observer_handle)?;
 
         Ok(())
     }
@@ -156,20 +156,13 @@ where
     EM: EventFirer<I, S>,
     O: Hash,
     C: AsRef<O> + Named,
-    Z: HasObjective,
-    E: HasObservers + Executor<EM, I, Z::Objective, S>,
+    E: HasObservers + Executor<I, S>,
     E::Observers: ObserversTuple<I, S>,
     S: HasCorpus<I> + HasMetadata + HasRand + HasCurrentCorpusId + HasCurrentTestcase<I>,
     I: ResizableMutator<u8> + HasMutatorBytes + Clone,
 {
     #[inline]
-    fn colorize(
-        fuzzer: &mut Z,
-        executor: &mut E,
-        state: &mut S,
-        manager: &mut EM,
-        observer_handle: &Handle<C>,
-    ) -> Result<I, Error> {
+    fn colorize(executor: &mut E, state: &mut S, observer_handle: &Handle<C>) -> Result<I, Error> {
         let mut input = state.current_input_cloned()?;
         // The backup of the input
         let backup = input.clone();
@@ -179,8 +172,7 @@ where
         // First, run orig_input once and get the original hash
 
         // Idea: No need to do this every time
-        let orig_hash =
-            Self::get_raw_map_hash_run(fuzzer, executor, state, manager, &input, observer_handle)?;
+        let orig_hash = Self::get_raw_map_hash_run(executor, state, &input, observer_handle)?;
         let changed_bytes = changed.mutator_bytes_mut();
         let input_len = changed_bytes.len();
 
@@ -218,14 +210,8 @@ where
                     );
                 }
 
-                let changed_hash = Self::get_raw_map_hash_run(
-                    fuzzer,
-                    executor,
-                    state,
-                    manager,
-                    &input,
-                    observer_handle,
-                )?;
+                let changed_hash =
+                    Self::get_raw_map_hash_run(executor, state, &input, observer_handle)?;
 
                 if orig_hash == changed_hash {
                     // The change in this range is safe!
@@ -306,16 +292,14 @@ where
 
     // Run the target and get map hash but before hitcounts's post_exec is used
     fn get_raw_map_hash_run(
-        fuzzer: &mut Z,
         executor: &mut E,
         state: &mut S,
-        manager: &mut EM,
         input: &I,
         observer_handle: &Handle<C>,
     ) -> Result<usize, Error> {
         executor.observers_mut().pre_exec_all(state, input)?;
 
-        let exit_kind = executor.run_target(fuzzer.objective_mut(), state, manager, input)?;
+        let exit_kind = executor.run_target(state, input)?;
 
         let observers = executor.observers();
         let observer = observers[observer_handle].as_ref();

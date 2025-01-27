@@ -71,8 +71,7 @@ where
     }
 }
 
-impl<EM, H, HB, HT, I, OF, OT, S> Executor<EM, I, OF, S>
-    for GenericInProcessExecutor<H, HB, HT, I, OT, S>
+impl<H, HB, HT, I, OT, S> Executor<I, S> for GenericInProcessExecutor<H, HB, HT, I, OT, S>
 where
     S: HasExecutions,
     OT: ObserversTuple<I, S>,
@@ -80,25 +79,18 @@ where
     HB: BorrowMut<H>,
     H: FnMut(&I) -> ExitKind + Sized,
 {
-    fn run_target(
-        &mut self,
-        objective: &mut OF,
-        state: &mut S,
-        mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error> {
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
         *state.executions_mut() += 1;
         unsafe {
             let executor_ptr = ptr::from_ref(self) as *const c_void;
-            self.inner
-                .enter_target(objective, state, mgr, input, executor_ptr);
+            self.inner.enter_target(state, input, executor_ptr);
         }
         self.inner.hooks.pre_exec_all(state, input);
 
         let ret = self.harness_fn.borrow_mut()(input);
 
         self.inner.hooks.post_exec_all(state, input);
-        self.inner.leave_target(objective, state, mgr, input);
+        self.inner.leave_target(state, input);
         Ok(ret)
     }
 }
@@ -365,7 +357,7 @@ pub fn run_observers_and_save_state<E, EM, I, OF, S>(
     event_mgr: &mut EM,
     exitkind: ExitKind,
 ) where
-    E: Executor<EM, I, OF, S> + HasObservers,
+    E: Executor<I, S> + HasObservers,
     E::Observers: ObserversTuple<I, S>,
     EM: EventFirer<I, S> + EventRestarter<S>,
     OF: Feedback<EM, I, E::Observers, S>,
@@ -426,7 +418,7 @@ pub fn run_observers_and_save_state<E, EM, I, OF, S>(
 #[cfg(any(unix, feature = "std"))]
 pub unsafe fn generic_inproc_crash_handler<E, EM, I, OF, S>()
 where
-    E: Executor<EM, I, OF, S> + HasObservers,
+    E: Executor<I, S> + HasObservers,
     E::Observers: ObserversTuple<I, S>,
     EM: EventFirer<I, S> + EventRestarter<S>,
     OF: Feedback<EM, I, E::Observers, S>,
@@ -466,9 +458,7 @@ mod tests {
         executors::{Executor, ExitKind, InProcessExecutor},
         feedbacks::CrashFeedback,
         inputs::NopInput,
-        schedulers::RandScheduler,
-        state::{NopState, StdState},
-        StdFuzzer,
+        state::StdState,
     };
 
     #[test]
@@ -479,7 +469,6 @@ mod tests {
         let solutions = InMemoryCorpus::new();
         let mut objective = CrashFeedback::new();
         let mut feedback = tuple_list!();
-        let sche: RandScheduler<NopState<NopInput>> = RandScheduler::new();
         let mut mgr = NopEventManager::new();
         let mut state =
             StdState::new(rand, corpus, solutions, &mut feedback, &mut objective).unwrap();
@@ -491,11 +480,8 @@ mod tests {
             &mut mgr,
         )
         .unwrap();
-        let mut fuzzer = StdFuzzer::new(sche, feedback, objective);
 
         let input = NopInput {};
-        in_process_executor
-            .run_target(&mut fuzzer, &mut state, &mut mgr, &input)
-            .unwrap();
+        in_process_executor.run_target(&mut state, &input).unwrap();
     }
 }

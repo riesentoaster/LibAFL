@@ -39,10 +39,10 @@ pub mod stateful;
 ///
 /// On Linux, when fuzzing a Rust target, set `panic = "abort"` in your `Cargo.toml` (see [Cargo documentation](https://doc.rust-lang.org/cargo/reference/profiles.html#panic)).
 /// Else panics can not be caught by `LibAFL`.
-pub type InProcessForkExecutor<'a, EM, H, I, OF, OT, S, SP> =
-    GenericInProcessForkExecutor<'a, EM, H, (), I, OF, OT, S, SP>;
+pub type InProcessForkExecutor<'a, H, I, OT, S, SP> =
+    GenericInProcessForkExecutor<'a, H, (), I, OT, S, SP>;
 
-impl<'a, H, I, OF, OT, S, SP, EM> InProcessForkExecutor<'a, EM, H, I, OF, OT, S, SP>
+impl<'a, H, I, OT, S, SP> InProcessForkExecutor<'a, H, I, OT, S, SP>
 where
     OT: ObserversTuple<I, S>,
 {
@@ -50,9 +50,7 @@ where
     pub fn new(
         harness_fn: &'a mut H,
         observers: OT,
-        objective: &mut OF,
         state: &mut S,
-        event_mgr: &mut EM,
         timeout: Duration,
         shmem_provider: SP,
     ) -> Result<Self, Error> {
@@ -60,9 +58,7 @@ where
             tuple_list!(),
             harness_fn,
             observers,
-            objective,
             state,
-            event_mgr,
             timeout,
             shmem_provider,
         )
@@ -73,13 +69,12 @@ where
 ///
 /// On Linux, when fuzzing a Rust target, set `panic = "abort"` in your `Cargo.toml` (see [Cargo documentation](https://doc.rust-lang.org/cargo/reference/profiles.html#panic)).
 /// Else panics can not be caught by `LibAFL`.
-pub struct GenericInProcessForkExecutor<'a, EM, H, HT, I, OF, OT, S, SP> {
+pub struct GenericInProcessForkExecutor<'a, H, HT, I, OT, S, SP> {
     harness_fn: &'a mut H,
-    inner: GenericInProcessForkExecutorInner<EM, HT, I, OF, OT, S, SP>,
+    inner: GenericInProcessForkExecutorInner<HT, I, OT, S, SP>,
 }
 
-impl<H, HT, I, OF, OT, S, SP, EM> Debug
-    for GenericInProcessForkExecutor<'_, EM, H, HT, I, OF, OT, S, SP>
+impl<H, HT, I, OT, S, SP> Debug for GenericInProcessForkExecutor<'_, H, HT, I, OT, S, SP>
 where
     HT: Debug,
     OT: Debug,
@@ -102,8 +97,7 @@ where
     }
 }
 
-impl<EM, H, HT, I, OF, OT, S, SP> Executor<EM, I, OF, S>
-    for GenericInProcessForkExecutor<'_, EM, H, HT, I, OF, OT, S, SP>
+impl<H, HT, I, OT, S, SP> Executor<I, S> for GenericInProcessForkExecutor<'_, H, HT, I, OT, S, SP>
 where
     H: FnMut(&I) -> ExitKind + Sized,
     HT: ExecutorHooksTuple<I, S>,
@@ -112,13 +106,7 @@ where
     SP: ShMemProvider,
 {
     #[inline]
-    fn run_target(
-        &mut self,
-        objective: &mut OF,
-        state: &mut S,
-        mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error> {
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
         *state.executions_mut() += 1;
 
         unsafe {
@@ -126,11 +114,9 @@ where
             match fork() {
                 Ok(ForkResult::Child) => {
                     // Child
-                    self.inner
-                        .pre_run_target_child(objective, state, mgr, input)?;
+                    self.inner.pre_run_target_child(state, input)?;
                     (self.harness_fn)(input);
-                    self.inner
-                        .post_run_target_child(objective, state, mgr, input);
+                    self.inner.post_run_target_child(state, input);
                     Ok(ExitKind::Ok)
                 }
                 Ok(ForkResult::Parent { child }) => {
@@ -143,20 +129,17 @@ where
     }
 }
 
-impl<'a, H, HT, I, OF, OT, S, SP, EM> GenericInProcessForkExecutor<'a, EM, H, HT, I, OF, OT, S, SP>
+impl<'a, H, HT, I, OT, S, SP> GenericInProcessForkExecutor<'a, H, HT, I, OT, S, SP>
 where
     HT: ExecutorHooksTuple<I, S>,
     OT: ObserversTuple<I, S>,
 {
     /// Creates a new [`GenericInProcessForkExecutor`] with custom hooks
-    #[expect(clippy::too_many_arguments)]
     pub fn with_hooks(
         userhooks: HT,
         harness_fn: &'a mut H,
         observers: OT,
-        objective: &mut OF,
         state: &mut S,
-        event_mgr: &mut EM,
         timeout: Duration,
         shmem_provider: SP,
     ) -> Result<Self, Error>
@@ -166,9 +149,7 @@ where {
             inner: GenericInProcessForkExecutorInner::with_hooks(
                 userhooks,
                 observers,
-                objective,
                 state,
-                event_mgr,
                 timeout,
                 shmem_provider,
             )?,
@@ -188,9 +169,7 @@ where {
     }
 }
 
-impl<H, HT, I, OF, OT, S, SP, EM> HasObservers
-    for GenericInProcessForkExecutor<'_, EM, H, HT, I, OF, OT, S, SP>
-{
+impl<H, HT, I, OT, S, SP> HasObservers for GenericInProcessForkExecutor<'_, H, HT, I, OT, S, SP> {
     type Observers = OT;
     #[inline]
     fn observers(&self) -> RefIndexable<&Self::Observers, Self::Observers> {
@@ -322,12 +301,10 @@ mod tests {
         #[cfg(not(target_os = "linux"))]
         use crate::executors::hooks::timer::{Itimerval, Timeval};
         use crate::{
-            events::SimpleEventManager,
             executors::{
                 hooks::inprocess_fork::InChildProcessHooks,
                 inprocess_fork::GenericInProcessForkExecutor,
             },
-            fuzzer::NopFuzzer,
             state::NopState,
         };
 
@@ -380,12 +357,9 @@ mod tests {
             },
         };
         let input = NopInput {};
-        let mut fuzzer = NopFuzzer::new();
         let mut state = NopState::new();
-        let mut mgr: SimpleEventManager<NopInput, _, NopState<NopInput>> =
-            SimpleEventManager::printing();
         in_process_fork_executor
-            .run_target(&mut fuzzer, &mut state, &mut mgr, &input)
+            .run_target(&mut state, &input)
             .unwrap();
     }
 }

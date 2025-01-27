@@ -55,8 +55,7 @@ where
     }
 }
 
-impl<EM, H, I, OF, OT, RT, S, TC> Executor<EM, I, OF, S>
-    for FridaInProcessExecutor<'_, '_, '_, H, I, OT, RT, S, TC>
+impl<H, I, OT, RT, S, TC> Executor<I, S> for FridaInProcessExecutor<'_, '_, '_, H, I, OT, RT, S, TC>
 where
     H: FnMut(&I) -> ExitKind,
     S: HasExecutions,
@@ -66,13 +65,7 @@ where
 {
     /// Instruct the target about the input and run
     #[inline]
-    fn run_target(
-        &mut self,
-        objective: &mut OF,
-        state: &mut S,
-        mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error> {
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
         let target_bytes = self.target_bytes_converter.to_target_bytes(input);
         self.helper.pre_exec(target_bytes.as_slice())?;
         if self.helper.stalker_enabled() {
@@ -92,7 +85,7 @@ where
                 }
             }
         }
-        let res = self.base.run_target(objective, state, mgr, input);
+        let res = self.base.run_target(state, input);
         if self.helper.stalker_enabled() {
             self.stalker.deactivate();
         }

@@ -255,7 +255,7 @@ where
         + HasCurrentCorpusId
         + HasNamedMetadata
         + HasMetadata,
-    E: Executor<EM, I, Z::Objective, S> + HasObservers<Observers = OT>,
+    E: Executor<I, S> + HasObservers<Observers = OT>,
     EM: EventFirer<I, S> + EventRestarter<S> + HasEventManagerId + ProgressReporter<S>,
     OT: ObserversTuple<I, S>,
     PS: PushStage<EM, I, OT, S, Z>,

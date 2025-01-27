@@ -89,7 +89,7 @@ pub unsafe fn inproc_qemu_timeout_handler<E, EM, ET, I, OF, S>(
     context: Option<&mut ucontext_t>,
     data: &mut InProcessExecutorHandlerData,
 ) where
-    E: HasObservers + HasInProcessHooks<I, S> + Executor<EM, I, OF, S>,
+    E: HasObservers + HasInProcessHooks<I, S> + Executor<I, S>,
     E::Observers: ObserversTuple<I, S>,
     EM: EventFirer<I, S> + EventRestarter<S>,
     ET: EmulatorModuleTuple<I, S>,
@@ -235,7 +235,7 @@ where
     }
 }
 
-impl<C, CM, ED, EM, ET, H, I, OF, OT, S, SM> Executor<EM, I, OF, S>
+impl<C, CM, ED, EM, ET, H, I, OF, OT, S, SM> Executor<I, S>
     for QemuExecutor<'_, C, CM, ED, ET, H, I, OT, S, SM>
 where
     C: Clone,
@@ -247,13 +247,7 @@ where
     OT: ObserversTuple<I, S>,
     S: HasExecutions + Unpin,
 {
-    fn run_target(
-        &mut self,
-        objective: &mut OF,
-        state: &mut S,
-        mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error> {
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
         if self.first_exec {
             self.inner.exposed_executor_state_mut().first_exec(state);
             self.first_exec = false;
@@ -263,7 +257,7 @@ where
             .exposed_executor_state_mut()
             .pre_exec(state, input);
 
-        let mut exit_kind = self.inner.run_target(objective, state, mgr, input)?;
+        let mut exit_kind = self.inner.run_target(state, input)?;
 
         self.inner.exposed_executor_state.post_exec(
             input,
@@ -387,7 +381,7 @@ where
 }
 
 #[cfg(feature = "fork")]
-impl<C, CM, ED, EM, ET, H, I, OF, OT, S, SM, SP> Executor<EM, I, OF, S>
+impl<C, CM, ED, EM, ET, H, I, OF, OT, S, SM, SP> Executor<I, S>
     for QemuForkExecutor<'_, C, CM, ED, EM, ET, H, I, OF, OT, S, SM, SP>
 where
     C: Clone,
@@ -402,18 +396,12 @@ where
     S: HasExecutions + Unpin,
     SP: ShMemProvider,
 {
-    fn run_target(
-        &mut self,
-        objective: &mut OF,
-        state: &mut S,
-        mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error> {
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
         self.inner.exposed_executor_state.first_exec(state);
 
         self.inner.exposed_executor_state.pre_exec(state, input);
 
-        let mut exit_kind = self.inner.run_target(objective, state, mgr, input)?;
+        let mut exit_kind = self.inner.run_target(state, input)?;
 
         self.inner.exposed_executor_state.post_exec(
             input,

@@ -65,7 +65,7 @@ where
     }
 }
 
-impl<EM, H, HB, HT, I, OF, OT, S, ES> Executor<EM, I, OF, S>
+impl<H, HB, HT, I, OT, S, ES> Executor<I, S>
     for StatefulGenericInProcessExecutor<ES, H, HB, HT, I, OT, S>
 where
     H: FnMut(&mut ES, &mut S, &I) -> ExitKind + Sized,
@@ -74,25 +74,18 @@ where
     OT: ObserversTuple<I, S>,
     S: HasExecutions,
 {
-    fn run_target(
-        &mut self,
-        objective: &mut OF,
-        state: &mut S,
-        mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error> {
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
         *state.executions_mut() += 1;
         unsafe {
             let executor_ptr = ptr::from_ref(self) as *const c_void;
-            self.inner
-                .enter_target(objective, state, mgr, input, executor_ptr);
+            self.inner.enter_target(state, input, executor_ptr);
         }
         self.inner.hooks.pre_exec_all(state, input);
 
         let ret = self.harness_fn.borrow_mut()(&mut self.exposed_executor_state, state, input);
 
         self.inner.hooks.post_exec_all(state, input);
-        self.inner.leave_target(objective, state, mgr, input);
+        self.inner.leave_target(state, input);
         Ok(ret)
     }
 }

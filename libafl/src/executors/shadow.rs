@@ -64,19 +64,13 @@ where
     }
 }
 
-impl<E, EM, I, OF, S, SOT> Executor<EM, I, OF, S> for ShadowExecutor<E, I, S, SOT>
+impl<E, I, S, SOT> Executor<I, S> for ShadowExecutor<E, I, S, SOT>
 where
-    E: Executor<EM, I, OF, S> + HasObservers,
+    E: Executor<I, S> + HasObservers,
     SOT: ObserversTuple<I, S>,
 {
-    fn run_target(
-        &mut self,
-        objective: &mut OF,
-        state: &mut S,
-        mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error> {
-        self.executor.run_target(objective, state, mgr, input)
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
+        self.executor.run_target(state, input)
     }
 }
 

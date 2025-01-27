@@ -385,19 +385,13 @@ where
     }
 }
 
-impl<EM, I, OF, OT, S, T> Executor<EM, I, OF, S> for CommandExecutor<I, OT, S, T>
+impl<I, OT, S, T> Executor<I, S> for CommandExecutor<I, OT, S, T>
 where
     S: HasExecutions,
     T: CommandConfigurator<I> + Debug,
     OT: MatchName + ObserversTuple<I, S>,
 {
-    fn run_target(
-        &mut self,
-        _objective: &mut OF,
-        state: &mut S,
-        _mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error> {
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
         self.execute_input_with_command(state, input)
     }
 }
@@ -419,7 +413,7 @@ where
 }
 
 #[cfg(target_os = "linux")]
-impl<EM, I, OF, OT, S, T, HT> Executor<EM, I, OF, S> for CommandExecutor<I, OT, S, T, HT, Pid>
+impl<EM, I, OF, OT, S, T, HT> Executor<I, S> for CommandExecutor<I, OT, S, T, HT, Pid>
 where
     HT: ExecutorHooksTuple<I, S>,
     OT: MatchName + ObserversTuple<I, S>,
@@ -431,13 +425,7 @@ where
     ///
     /// Hooks' `pre_exec` and observers' `pre_exec_child` are called with the child process stopped
     /// just before the `exec` return (after forking).
-    fn run_target(
-        &mut self,
-        _objective: &mut OF,
-        state: &mut S,
-        _mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error> {
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
         *state.executions_mut() += 1;
 
         let child = self.configurer.spawn_child(input)?;
@@ -851,25 +839,17 @@ fn waitpid_filtered(pid: Pid, options: Option<WaitPidFlag>) -> Result<WaitStatus
 #[cfg(test)]
 mod tests {
     use crate::{
-        events::SimpleEventManager,
         executors::{
             command::{CommandExecutor, InputLocation},
             Executor,
         },
-        fuzzer::NopFuzzer,
         inputs::{BytesInput, NopInput},
-        monitors::SimpleMonitor,
         state::NopState,
     };
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_builder() {
-        let mut mgr: SimpleEventManager<NopInput, _, NopState<NopInput>> =
-            SimpleEventManager::new(SimpleMonitor::new(|status| {
-                log::info!("{status}");
-            }));
-
         let mut executor = CommandExecutor::builder();
         executor
             .program("ls")
@@ -879,9 +859,7 @@ mod tests {
 
         executor
             .run_target(
-                &mut NopFuzzer::new(),
                 &mut NopState::<NopInput>::new(),
-                &mut mgr,
                 &BytesInput::new(b"test".to_vec()),
             )
             .unwrap();

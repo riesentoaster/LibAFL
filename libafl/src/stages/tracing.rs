@@ -32,20 +32,19 @@ pub struct TracingStage<EM, I, TE, S, Z> {
 
 impl<EM, I, TE, S, Z> TracingStage<EM, I, TE, S, Z>
 where
-    TE: Executor<EM, I, Z::Objective, S> + HasObservers,
+    TE: Executor<I, S> + HasObservers,
     TE::Observers: ObserversTuple<I, S>,
     S: HasExecutions
         + HasCorpus<I>
         + HasNamedMetadata
         + HasCurrentTestcase<I>
         + MaybeHasClientPerfMonitor,
-    Z: HasObjective,
 {
     /// Perform tracing on the given `CorpusId`. Useful for if wrapping [`TracingStage`] with your
     /// own stage and you need to manage [`super::NestedStageRetryCountRestartHelper`] differently
     /// see [`super::ConcolicTracingStage`]'s implementation as an example of usage.
     #[allow(rustdoc::broken_intra_doc_links)]
-    pub fn trace(&mut self, fuzzer: &mut Z, state: &mut S, manager: &mut EM) -> Result<(), Error> {
+    pub fn trace(&mut self, state: &mut S) -> Result<(), Error> {
         start_timer!(state);
         let input = state.current_input_cloned()?;
 
@@ -58,9 +57,7 @@ where
         mark_feature_time!(state, PerfFeature::PreExecObservers);
 
         start_timer!(state);
-        let exit_kind =
-            self.tracer_executor
-                .run_target(fuzzer.objective_mut(), state, manager, &input)?;
+        let exit_kind = self.tracer_executor.run_target(state, &input)?;
         mark_feature_time!(state, PerfFeature::TargetExecution);
 
         start_timer!(state);
@@ -75,7 +72,7 @@ where
 
 impl<E, EM, I, TE, S, Z> Stage<E, EM, S, Z> for TracingStage<EM, I, TE, S, Z>
 where
-    TE: Executor<EM, I, Z::Objective, S> + HasObservers,
+    TE: Executor<I, S> + HasObservers,
     TE::Observers: ObserversTuple<I, S>,
     S: HasExecutions
         + HasCorpus<I>
@@ -88,12 +85,12 @@ where
     #[inline]
     fn perform(
         &mut self,
-        fuzzer: &mut Z,
+        _fuzzer: &mut Z,
         _executor: &mut E,
         state: &mut S,
-        manager: &mut EM,
+        _manager: &mut EM,
     ) -> Result<(), Error> {
-        self.trace(fuzzer, state, manager)
+        self.trace(state)
     }
 
     fn should_restart(&mut self, state: &mut S) -> Result<bool, Error> {
@@ -165,7 +162,7 @@ impl<E, EM, I, SOT, S, Z> Named for ShadowTracingStage<E, EM, I, SOT, S, Z> {
 impl<E, EM, I, SOT, S, Z> Stage<ShadowExecutor<E, I, S, SOT>, EM, S, Z>
     for ShadowTracingStage<E, EM, I, SOT, S, Z>
 where
-    E: Executor<EM, I, Z::Objective, S> + HasObservers,
+    E: Executor<I, S> + HasObservers,
     E::Observers: ObserversTuple<I, S>,
     SOT: ObserversTuple<I, S>,
     S: HasExecutions
@@ -175,7 +172,6 @@ where
         + HasCurrentTestcase<I>
         + HasCurrentCorpusId
         + MaybeHasClientPerfMonitor,
-    Z: HasObjective,
 {
     fn should_restart(&mut self, state: &mut S) -> Result<bool, Error> {
         RetryCountRestartHelper::no_retry(state, &self.name)
@@ -188,10 +184,10 @@ where
     #[inline]
     fn perform(
         &mut self,
-        fuzzer: &mut Z,
+        _fuzzer: &mut Z,
         executor: &mut ShadowExecutor<E, I, S, SOT>,
         state: &mut S,
-        manager: &mut EM,
+        _manager: &mut EM,
     ) -> Result<(), Error> {
         start_timer!(state);
         let input = state.current_input_cloned()?;
@@ -206,7 +202,7 @@ where
         mark_feature_time!(state, PerfFeature::PreExecObservers);
 
         start_timer!(state);
-        let exit_kind = executor.run_target(fuzzer.objective_mut(), state, manager, &input)?;
+        let exit_kind = executor.run_target(state, &input)?;
         mark_feature_time!(state, PerfFeature::TargetExecution);
 
         start_timer!(state);
@@ -224,7 +220,7 @@ where
 
 impl<E, EM, I, SOT, S, Z> ShadowTracingStage<E, EM, I, SOT, S, Z>
 where
-    E: Executor<EM, I, Z::Objective, S> + HasObservers,
+    E: Executor<I, S> + HasObservers,
     S: HasExecutions + HasCorpus<I>,
     SOT: ObserversTuple<I, S>,
     Z: HasObjective,

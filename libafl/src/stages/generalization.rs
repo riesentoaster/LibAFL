@@ -66,7 +66,7 @@ impl<C, E, EM, O, S, Z> Stage<E, EM, S, Z>
     for GeneralizationStage<C, EM, BytesInput, O, E::Observers, S, Z>
 where
     C: CanTrack + AsRef<O> + Named,
-    E: Executor<EM, BytesInput, Z::Objective, S> + HasObservers,
+    E: Executor<BytesInput, S> + HasObservers,
     E::Observers: ObserversTuple<BytesInput, S>,
     O: MapObserver,
     S: HasExecutions
@@ -93,10 +93,10 @@ where
     #[expect(clippy::too_many_lines)]
     fn perform(
         &mut self,
-        fuzzer: &mut Z,
+        _fuzzer: &mut Z,
         executor: &mut E,
         state: &mut S,
-        manager: &mut EM,
+        _manager: &mut EM,
     ) -> Result<(), Error> {
         let Some(corpus_id) = state.current_corpus_id()? else {
             return Err(Error::illegal_state(
@@ -138,55 +138,45 @@ where
         };
 
         // Do not generalized unstable inputs
-        if !self.verify_input(fuzzer, executor, state, manager, &novelties, &original)? {
+        if !self.verify_input(executor, state, &novelties, &original)? {
             return Ok(());
         }
 
         self.find_gaps(
-            fuzzer,
             executor,
             state,
-            manager,
             &mut payload,
             &novelties,
             increment_by_offset,
             255,
         )?;
         self.find_gaps(
-            fuzzer,
             executor,
             state,
-            manager,
             &mut payload,
             &novelties,
             increment_by_offset,
             127,
         )?;
         self.find_gaps(
-            fuzzer,
             executor,
             state,
-            manager,
             &mut payload,
             &novelties,
             increment_by_offset,
             63,
         )?;
         self.find_gaps(
-            fuzzer,
             executor,
             state,
-            manager,
             &mut payload,
             &novelties,
             increment_by_offset,
             31,
         )?;
         self.find_gaps(
-            fuzzer,
             executor,
             state,
-            manager,
             &mut payload,
             &novelties,
             increment_by_offset,
@@ -194,136 +184,68 @@ where
         )?;
 
         self.find_gaps(
-            fuzzer,
             executor,
             state,
-            manager,
             &mut payload,
             &novelties,
             find_next_char,
             b'.',
         )?;
         self.find_gaps(
-            fuzzer,
             executor,
             state,
-            manager,
             &mut payload,
             &novelties,
             find_next_char,
             b';',
         )?;
         self.find_gaps(
-            fuzzer,
             executor,
             state,
-            manager,
             &mut payload,
             &novelties,
             find_next_char,
             b',',
         )?;
         self.find_gaps(
-            fuzzer,
             executor,
             state,
-            manager,
             &mut payload,
             &novelties,
             find_next_char,
             b'\n',
         )?;
         self.find_gaps(
-            fuzzer,
             executor,
             state,
-            manager,
             &mut payload,
             &novelties,
             find_next_char,
             b'\r',
         )?;
         self.find_gaps(
-            fuzzer,
             executor,
             state,
-            manager,
             &mut payload,
             &novelties,
             find_next_char,
             b'#',
         )?;
         self.find_gaps(
-            fuzzer,
             executor,
             state,
-            manager,
             &mut payload,
             &novelties,
             find_next_char,
             b' ',
         )?;
 
-        self.find_gaps_in_closures(
-            fuzzer,
-            executor,
-            state,
-            manager,
-            &mut payload,
-            &novelties,
-            b'(',
-            b')',
-        )?;
-        self.find_gaps_in_closures(
-            fuzzer,
-            executor,
-            state,
-            manager,
-            &mut payload,
-            &novelties,
-            b'[',
-            b']',
-        )?;
-        self.find_gaps_in_closures(
-            fuzzer,
-            executor,
-            state,
-            manager,
-            &mut payload,
-            &novelties,
-            b'{',
-            b'}',
-        )?;
-        self.find_gaps_in_closures(
-            fuzzer,
-            executor,
-            state,
-            manager,
-            &mut payload,
-            &novelties,
-            b'<',
-            b'>',
-        )?;
-        self.find_gaps_in_closures(
-            fuzzer,
-            executor,
-            state,
-            manager,
-            &mut payload,
-            &novelties,
-            b'\'',
-            b'\'',
-        )?;
-        self.find_gaps_in_closures(
-            fuzzer,
-            executor,
-            state,
-            manager,
-            &mut payload,
-            &novelties,
-            b'"',
-            b'"',
-        )?;
+        self.find_gaps_in_closures(executor, state, &mut payload, &novelties, b'(', b')')?;
+        self.find_gaps_in_closures(executor, state, &mut payload, &novelties, b'[', b']')?;
+        self.find_gaps_in_closures(executor, state, &mut payload, &novelties, b'{', b'}')?;
+        self.find_gaps_in_closures(executor, state, &mut payload, &novelties, b'<', b'>')?;
+        self.find_gaps_in_closures(executor, state, &mut payload, &novelties, b'\'', b'\'')?;
+        self.find_gaps_in_closures(executor, state, &mut payload, &novelties, b'"', b'"')?;
 
         // Save the modified input in the corpus
         {
@@ -363,15 +285,13 @@ where
 
     fn verify_input<E>(
         &self,
-        fuzzer: &mut Z,
         executor: &mut E,
         state: &mut S,
-        manager: &mut EM,
         novelties: &[usize],
         input: &BytesInput,
     ) -> Result<bool, Error>
     where
-        E: Executor<EM, BytesInput, Z::Objective, S> + HasObservers,
+        E: Executor<BytesInput, S> + HasObservers,
         E::Observers: ObserversTuple<BytesInput, S>,
         Z: HasObjective,
     {
@@ -380,7 +300,7 @@ where
         mark_feature_time!(state, PerfFeature::PreExecObservers);
 
         start_timer!(state);
-        let exit_kind = executor.run_target(fuzzer.objective_mut(), state, manager, input)?;
+        let exit_kind = executor.run_target(state, input)?;
         mark_feature_time!(state, PerfFeature::TargetExecution);
 
         start_timer!(state);
@@ -401,20 +321,17 @@ where
         payload.retain(|&x| !(x.is_none() & core::mem::replace(&mut previous, x.is_none())));
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn find_gaps<E>(
         &self,
-        fuzzer: &mut Z,
         executor: &mut E,
         state: &mut S,
-        manager: &mut EM,
         payload: &mut Vec<Option<u8>>,
         novelties: &[usize],
         find_next_index: fn(&[Option<u8>], usize, u8) -> usize,
         split_char: u8,
     ) -> Result<(), Error>
     where
-        E: Executor<EM, BytesInput, Z::Objective, S> + HasObservers<Observers = OT>,
+        E: Executor<BytesInput, S> + HasObservers<Observers = OT>,
         Z: HasObjective,
     {
         let mut start = 0;
@@ -427,7 +344,7 @@ where
             candidate.extend(payload[..start].iter().flatten());
             candidate.extend(payload[end..].iter().flatten());
 
-            if self.verify_input(fuzzer, executor, state, manager, novelties, &candidate)? {
+            if self.verify_input(executor, state, novelties, &candidate)? {
                 for item in &mut payload[start..end] {
                     *item = None;
                 }
@@ -440,20 +357,17 @@ where
         Ok(())
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn find_gaps_in_closures<E>(
         &self,
-        fuzzer: &mut Z,
         executor: &mut E,
         state: &mut S,
-        manager: &mut EM,
         payload: &mut Vec<Option<u8>>,
         novelties: &[usize],
         opening_char: u8,
         closing_char: u8,
     ) -> Result<(), Error>
     where
-        E: Executor<EM, BytesInput, Z::Objective, S> + HasObservers<Observers = OT>,
+        E: Executor<BytesInput, S> + HasObservers<Observers = OT>,
         Z: HasObjective,
     {
         let mut index = 0;
@@ -476,7 +390,7 @@ where
                     candidate.extend(payload[..start].iter().flatten());
                     candidate.extend(payload[end..].iter().flatten());
 
-                    if self.verify_input(fuzzer, executor, state, manager, novelties, &candidate)? {
+                    if self.verify_input(executor, state, novelties, &candidate)? {
                         for item in &mut payload[start..end] {
                             *item = None;
                         }

@@ -216,7 +216,7 @@ impl<I, S> InProcessHooks<I, S> {
     #[allow(unused_variables)] // for `exec_tmout` without `std`
     pub fn new<E, EM, OF>(exec_tmout: Duration) -> Result<Self, Error>
     where
-        E: Executor<EM, I, OF, S> + HasObservers + HasInProcessHooks<I, S>,
+        E: Executor<I, S> + HasObservers + HasInProcessHooks<I, S>,
         E::Observers: ObserversTuple<I, S>,
         EM: EventFirer<I, S> + EventRestarter<S>,
         OF: Feedback<EM, I, E::Observers, S>,
@@ -258,7 +258,7 @@ impl<I, S> InProcessHooks<I, S> {
     #[allow(unused_variables)] // for `exec_tmout` without `std`
     pub fn new<E, EM, OF>(exec_tmout: Duration) -> Result<Self, Error>
     where
-        E: Executor<EM, I, OF, S> + HasObservers + HasInProcessHooks<I, S>,
+        E: Executor<I, S> + HasObservers + HasInProcessHooks<I, S>,
         E::Observers: ObserversTuple<I, S>,
         EM: EventFirer<I, S> + EventRestarter<S>,
         I: Input + Clone,
@@ -317,7 +317,7 @@ impl<I, S> InProcessHooks<I, S> {
     #[expect(unused_variables)]
     pub fn new<E, EM, OF>(exec_tmout: Duration) -> Result<Self, Error>
     where
-        E: Executor<EM, I, OF, S> + HasObservers + HasInProcessHooks<I, S>,
+        E: Executor<I, S> + HasObservers + HasInProcessHooks<I, S>,
         EM: EventFirer<I, S> + EventRestarter<S>,
         OF: Feedback<EM, I, E::Observers, S>,
         S: HasExecutions + HasSolutions<I>,

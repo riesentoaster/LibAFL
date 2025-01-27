@@ -24,7 +24,7 @@ pub mod windows_asan_handler {
     /// ASAN deatch handler
     pub unsafe extern "C" fn asan_death_handler<E, EM, I, OF, S>()
     where
-        E: Executor<EM, I, OF, S> + HasObservers,
+        E: Executor<I, S> + HasObservers,
         E::Observers: ObserversTuple<I, S>,
         EM: EventFirer<I, S> + EventRestarter<S>,
         I: Input + Clone,
@@ -178,7 +178,7 @@ pub mod windows_exception_handler {
     #[cfg(feature = "std")]
     pub fn setup_panic_hook<E, EM, I, OF, S>()
     where
-        E: Executor<EM, I, OF, S> + HasObservers,
+        E: Executor<I, S> + HasObservers,
         E::Observers: ObserversTuple<I, S>,
         EM: EventFirer<I, S> + EventRestarter<S>,
         I: Input + Clone,
@@ -239,7 +239,7 @@ pub mod windows_exception_handler {
         global_state: *mut c_void,
         _p1: *mut u8,
     ) where
-        E: Executor<EM, I, OF, S> + HasInProcessHooks<I, S> + HasObservers,
+        E: Executor<I, S> + HasInProcessHooks<I, S> + HasObservers,
         E::Observers: ObserversTuple<I, S>,
         EM: EventFirer<I, S> + EventRestarter<S>,
         I: Input + Clone,
@@ -307,7 +307,7 @@ pub mod windows_exception_handler {
         exception_pointers: *mut EXCEPTION_POINTERS,
         data: &mut InProcessExecutorHandlerData,
     ) where
-        E: Executor<EM, I, OF, S> + HasObservers,
+        E: Executor<I, S> + HasObservers,
         E::Observers: ObserversTuple<I, S>,
         EM: EventFirer<I, S> + EventRestarter<S>,
         I: Input + Clone,

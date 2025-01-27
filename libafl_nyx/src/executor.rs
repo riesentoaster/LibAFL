@@ -38,19 +38,13 @@ impl NyxExecutor<(), ()> {
     }
 }
 
-impl<EM, I, OF, OT, S> Executor<EM, I, OF, S> for NyxExecutor<S, OT>
+impl<EM, I, OF, OT, S> Executor<I, S> for NyxExecutor<S, OT>
 where
     S: HasExecutions,
     I: HasTargetBytes,
     OT: ObserversTuple<I, S>,
 {
-    fn run_target(
-        &mut self,
-        _objective: &mut OF,
-        state: &mut S,
-        _mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error> {
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
         *state.executions_mut() += 1;
 
         let bytes = input.target_bytes();

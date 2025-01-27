@@ -37,6 +37,8 @@ pub struct GenericInProcessExecutorInner<HT, I, OT, S> {
     pub(super) observers: OT,
     // Crash and timeout hah
     pub(super) hooks: (InProcessHooks<I, S>, HT),
+    pub(super) event_mgr_ptr: *mut c_void,
+    pub(super) objective_ptr: *mut c_void,
 }
 
 impl<HT, I, OT, S> Debug for GenericInProcessExecutorInner<HT, I, OT, S>
@@ -75,14 +77,7 @@ where
     /// the code.
     // TODO: Remove EM and Z from function bound and add it to struct instead to avoid possible type confusion
     #[inline]
-    pub unsafe fn enter_target<EM, OF>(
-        &mut self,
-        objective: &mut OF,
-        state: &mut S,
-        mgr: &mut EM,
-        input: &I,
-        executor_ptr: *const c_void,
-    ) {
+    pub unsafe fn enter_target(&mut self, state: &mut S, input: &I, executor_ptr: *const c_void) {
         unsafe {
             let data = &raw mut GLOBAL_STATE;
             write_volatile(
@@ -96,27 +91,15 @@ where
                 &raw mut ((*data).state_ptr),
                 ptr::from_mut(state) as *mut c_void,
             );
-            write_volatile(
-                &raw mut (*data).event_mgr_ptr,
-                ptr::from_mut(mgr) as *mut c_void,
-            );
-            write_volatile(
-                &raw mut (*data).objective_ptr,
-                ptr::from_mut(objective) as *mut c_void,
-            );
+            write_volatile(&raw mut (*data).event_mgr_ptr, self.event_mgr_ptr);
+            write_volatile(&raw mut (*data).objective_ptr, self.objective_ptr);
             compiler_fence(Ordering::SeqCst);
         }
     }
 
     /// This function marks the boundary between the fuzzer and the target
     #[inline]
-    pub fn leave_target<EM, OF>(
-        &mut self,
-        _objective: &mut OF,
-        _state: &mut S,
-        _mgr: &mut EM,
-        _input: &I,
-    ) {
+    pub fn leave_target(&mut self, _state: &mut S, _input: &I) {
         unsafe {
             let data = &raw mut GLOBAL_STATE;
 
@@ -141,7 +124,7 @@ where
         event_mgr: &mut EM,
     ) -> Result<Self, Error>
     where
-        E: Executor<EM, I, OF, S> + HasObservers + HasInProcessHooks<I, S>,
+        E: Executor<I, S> + HasObservers + HasInProcessHooks<I, S>,
         E::Observers: ObserversTuple<I, S>,
         EM: EventFirer<I, S> + EventRestarter<S>,
         I: Input + Clone,
@@ -169,7 +152,7 @@ where
         exec_tmout: Duration,
     ) -> Result<Self, Error>
     where
-        E: Executor<EM, I, OF, S> + HasObservers + HasInProcessHooks<I, S>,
+        E: Executor<I, S> + HasObservers + HasInProcessHooks<I, S>,
         E::Observers: ObserversTuple<I, S>,
         EM: EventFirer<I, S> + EventRestarter<S>,
         I: Input + Clone,
@@ -194,13 +177,13 @@ where
     pub fn with_timeout_generic<E, EM, OF>(
         user_hooks: HT,
         observers: OT,
-        _objective: &mut OF,
+        objective: &mut OF,
         state: &mut S,
-        _event_mgr: &mut EM,
+        event_mgr: &mut EM,
         timeout: Duration,
     ) -> Result<Self, Error>
     where
-        E: Executor<EM, I, OF, S> + HasObservers + HasInProcessHooks<I, S>,
+        E: Executor<I, S> + HasObservers + HasInProcessHooks<I, S>,
         E::Observers: ObserversTuple<I, S>,
         EM: EventFirer<I, S> + EventRestarter<S>,
         OF: Feedback<EM, I, E::Observers, S>,
@@ -234,7 +217,12 @@ where
             *hooks.0.millis_sec_mut() = timeout.as_millis() as i64;
         }
 
-        Ok(Self { observers, hooks })
+        Ok(Self {
+            observers,
+            hooks,
+            event_mgr_ptr: ptr::from_mut(event_mgr) as *mut c_void,
+            objective_ptr: ptr::from_mut(objective) as *mut c_void,
+        })
     }
 
     /// The inprocess handlers

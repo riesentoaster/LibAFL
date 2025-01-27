@@ -117,15 +117,9 @@ pub trait HasObservers {
 }
 
 /// An executor takes the given inputs, and runs the harness/target.
-pub trait Executor<EM, I, OF, S> {
+pub trait Executor<I, S> {
     /// Instruct the target about the input and run
-    fn run_target(
-        &mut self,
-        objective: &mut OF,
-        state: &mut S,
-        mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error>;
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error>;
 }
 
 /// A trait that allows to get/set an `Executor`'s timeout thresold
@@ -163,9 +157,7 @@ mod test {
     use libafl_bolts::{AsSlice, Error};
 
     use crate::{
-        events::NopEventManager,
         executors::{Executor, ExitKind},
-        fuzzer::NopFuzzer,
         inputs::{BytesInput, HasTargetBytes},
         state::{HasExecutions, NopState},
     };
@@ -193,18 +185,12 @@ mod test {
         }
     }
 
-    impl<EM, I, OF, S> Executor<EM, I, OF, S> for NopExecutor<S>
+    impl<I, S> Executor<I, S> for NopExecutor<S>
     where
         S: HasExecutions,
         I: HasTargetBytes,
     {
-        fn run_target(
-            &mut self,
-            _objective: &mut OF,
-            state: &mut S,
-            _mgr: &mut EM,
-            input: &I,
-        ) -> Result<ExitKind, Error> {
+        fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
             *state.executions_mut() += 1;
 
             if input.target_bytes().as_slice().is_empty() {
@@ -220,15 +206,9 @@ mod test {
         let empty_input = BytesInput::new(vec![]);
         let nonempty_input = BytesInput::new(vec![1u8]);
         let mut executor = NopExecutor::new();
-        let mut fuzzer = NopFuzzer::new();
-        let mut mgr: NopEventManager = NopEventManager::new();
         let mut state: NopState<BytesInput> = NopState::new();
 
-        executor
-            .run_target(&mut fuzzer, &mut state, &mut mgr, &empty_input)
-            .unwrap_err();
-        executor
-            .run_target(&mut fuzzer, &mut state, &mut mgr, &nonempty_input)
-            .unwrap();
+        executor.run_target(&mut state, &empty_input).unwrap_err();
+        executor.run_target(&mut state, &nonempty_input).unwrap();
     }
 }

@@ -513,7 +513,7 @@ where
 impl<CS, E, EM, F, I, IF, OF, S> EvaluatorObservers<E, EM, I, S> for StdFuzzer<CS, F, IF, OF>
 where
     CS: Scheduler<I, S>,
-    E: HasObservers + Executor<EM, I, OF, S>,
+    E: HasObservers + Executor<I, S>,
     E::Observers: MatchName + ObserversTuple<I, S> + Serialize,
     EM: EventFirer<I, S> + CanSerializeObserver<E::Observers>,
     F: Feedback<EM, I, E::Observers, S>,
@@ -588,7 +588,7 @@ impl<I: Hash> InputFilter<I> for BloomInputFilter {
 impl<CS, E, EM, F, I, IF, OF, S> Evaluator<E, EM, I, S> for StdFuzzer<CS, F, IF, OF>
 where
     CS: Scheduler<I, S>,
-    E: HasObservers + Executor<EM, I, OF, S>,
+    E: HasObservers + Executor<I, S>,
     E::Observers: MatchName + ObserversTuple<I, S> + Serialize,
     EM: EventFirer<I, S> + CanSerializeObserver<E::Observers>,
     F: Feedback<EM, I, E::Observers, S>,
@@ -916,7 +916,7 @@ pub trait ExecutesInput<E, EM, I, S> {
 impl<CS, E, EM, F, I, IF, OF, S> ExecutesInput<E, EM, I, S> for StdFuzzer<CS, F, IF, OF>
 where
     CS: Scheduler<I, S>,
-    E: Executor<EM, I, OF, S> + HasObservers,
+    E: Executor<I, S> + HasObservers,
     E::Observers: ObserversTuple<I, S>,
     S: HasExecutions + HasCorpus<I> + MaybeHasClientPerfMonitor,
 {
@@ -925,7 +925,7 @@ where
         &mut self,
         state: &mut S,
         executor: &mut E,
-        event_mgr: &mut EM,
+        _event_mgr: &mut EM,
         input: &I,
     ) -> Result<ExitKind, Error> {
         start_timer!(state);
@@ -933,7 +933,7 @@ where
         mark_feature_time!(state, PerfFeature::PreExecObservers);
 
         start_timer!(state);
-        let exit_kind = executor.run_target(&mut self.objective, state, event_mgr, input)?;
+        let exit_kind = executor.run_target(state, input)?;
         mark_feature_time!(state, PerfFeature::TargetExecution);
 
         start_timer!(state);

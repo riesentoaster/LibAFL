@@ -77,7 +77,7 @@ pub mod unix_signal_handler {
     /// invokes the `post_exec` hook on all observer in case of panic
     pub fn setup_panic_hook<E, EM, I, OF, S>()
     where
-        E: Executor<EM, I, OF, S> + HasObservers,
+        E: Executor<I, S> + HasObservers,
         E::Observers: ObserversTuple<I, S>,
         EM: EventFirer<I, S> + EventRestarter<S>,
         OF: Feedback<EM, I, E::Observers, S>,
@@ -125,7 +125,7 @@ pub mod unix_signal_handler {
         _context: Option<&mut ucontext_t>,
         data: &mut InProcessExecutorHandlerData,
     ) where
-        E: Executor<EM, I, OF, S> + HasInProcessHooks<I, S> + HasObservers,
+        E: Executor<I, S> + HasInProcessHooks<I, S> + HasObservers,
         E::Observers: ObserversTuple<I, S>,
         EM: EventFirer<I, S> + EventRestarter<S>,
         OF: Feedback<EM, I, E::Observers, S>,
@@ -180,7 +180,7 @@ pub mod unix_signal_handler {
         _context: Option<&mut ucontext_t>,
         data: &mut InProcessExecutorHandlerData,
     ) where
-        E: Executor<EM, I, OF, S> + HasObservers,
+        E: Executor<I, S> + HasObservers,
         E::Observers: ObserversTuple<I, S>,
         EM: EventFirer<I, S> + EventRestarter<S>,
         OF: Feedback<EM, I, E::Observers, S>,

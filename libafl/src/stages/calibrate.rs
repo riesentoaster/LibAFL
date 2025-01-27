@@ -91,7 +91,7 @@ pub struct CalibrationStage<C, E, I, O, OT, S> {
 
 impl<C, E, EM, I, O, OT, S, Z> Stage<E, EM, S, Z> for CalibrationStage<C, E, I, O, OT, S>
 where
-    E: Executor<EM, I, Z::Objective, S> + HasObservers<Observers = OT>,
+    E: Executor<I, S> + HasObservers<Observers = OT>,
     EM: EventFirer<I, S>,
     O: MapObserver,
     C: AsRef<O>,
@@ -111,7 +111,7 @@ where
     #[expect(clippy::too_many_lines, clippy::cast_precision_loss)]
     fn perform(
         &mut self,
-        fuzzer: &mut Z,
+        _fuzzer: &mut Z,
         executor: &mut E,
         state: &mut S,
         mgr: &mut EM,
@@ -135,7 +135,7 @@ where
 
         let mut start = current_time();
 
-        let exit_kind = executor.run_target(fuzzer.objective_mut(), state, mgr, &input)?;
+        let exit_kind = executor.run_target(state, &input)?;
         let mut total_time = if exit_kind == ExitKind::Ok {
             current_time() - start
         } else {
@@ -184,7 +184,7 @@ where
             executor.observers_mut().pre_exec_all(state, &input)?;
             start = current_time();
 
-            let exit_kind = executor.run_target(fuzzer.objective_mut(), state, mgr, &input)?;
+            let exit_kind = executor.run_target(state, &input)?;
             if exit_kind != ExitKind::Ok {
                 if !has_errors {
                     mgr.log(

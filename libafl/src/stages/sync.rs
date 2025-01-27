@@ -233,7 +233,7 @@ impl<E, EM, I, IC, ICB, DI, S, SHM, SP, Z> Stage<E, EM, S, Z>
 where
     DI: Input,
     EM: EventFirer<I, S>,
-    E: HasObservers + Executor<EM, I, Z::Objective, S>,
+    E: HasObservers + Executor<I, S>,
     for<'a> E::Observers: Deserialize<'a>,
     I: Input + Clone,
     IC: InputConverter<From = I, To = DI>,

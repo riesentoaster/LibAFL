@@ -49,7 +49,7 @@ impl<EM, I, TE, S, Z> Named for ConcolicTracingStage<'_, EM, I, TE, S, Z> {
 
 impl<E, EM, I, TE, S, Z> Stage<E, EM, S, Z> for ConcolicTracingStage<'_, EM, I, TE, S, Z>
 where
-    TE: Executor<EM, I, Z::Objective, S> + HasObservers,
+    TE: Executor<I, S> + HasObservers,
     TE::Observers: ObserversTuple<I, S>,
     S: HasExecutions
         + HasCorpus<I>
@@ -62,12 +62,12 @@ where
     #[inline]
     fn perform(
         &mut self,
-        fuzzer: &mut Z,
+        _fuzzer: &mut Z,
         _executor: &mut E,
         state: &mut S,
-        manager: &mut EM,
+        _manager: &mut EM,
     ) -> Result<(), Error> {
-        self.inner.trace(fuzzer, state, manager)?;
+        self.inner.trace(state)?;
         if let Some(observer) = self.inner.executor().observers().get(&self.observer_handle) {
             let metadata = observer.create_metadata_from_current_map();
             state

@@ -258,18 +258,12 @@ pub enum SupportedExecutors<FSV, I, OT, NYX> {
 }
 
 #[cfg(feature = "nyx")]
-impl<S, I, OT, FSV, NYX, EM, Z> Executor<EM, I, S, Z> for SupportedExecutors<FSV, I, OT, NYX>
+impl<S, I, OT, FSV, NYX, EM, Z> Executor<I, S> for SupportedExecutors<FSV, I, OT, NYX>
 where
-    NYX: Executor<EM, I, S, Z>,
-    FSV: Executor<EM, I, S, Z>,
+    NYX: Executor<I, S>,
+    FSV: Executor<I, S>,
 {
-    fn run_target(
-        &mut self,
-        fuzzer: &mut Z,
-        state: &mut S,
-        mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error> {
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
         match self {
             Self::Forkserver(fsrv, _) => fsrv.run_target(fuzzer, state, mgr, input),
             #[cfg(feature = "nyx")]
@@ -332,20 +326,14 @@ pub enum SupportedExecutors<FSV, I, OT, S> {
 }
 
 #[cfg(not(feature = "nyx"))]
-impl<S, I, OF, OT, FSV, EM> Executor<EM, I, OF, S> for SupportedExecutors<FSV, I, OT, S>
+impl<S, I, OF, OT, FSV, EM> Executor<I, S> for SupportedExecutors<FSV, I, OT, S>
 where
     S: HasCorpus<I>,
-    FSV: Executor<EM, I, OF, S>,
+    FSV: Executor<I, S>,
 {
-    fn run_target(
-        &mut self,
-        objective: &mut OF,
-        state: &mut S,
-        mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error> {
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
         match self {
-            Self::Forkserver(fsrv, _) => fsrv.run_target(objective, state, mgr, input),
+            Self::Forkserver(fsrv, _) => fsrv.run_target(state, input),
         }
     }
 }

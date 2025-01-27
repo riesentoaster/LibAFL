@@ -1570,7 +1570,7 @@ impl Default
     }
 }
 
-impl<EM, I, OF, OT, S, SHM, TC> Executor<EM, I, OF, S> for ForkserverExecutor<I, OT, S, SHM, TC>
+impl<I, OT, S, SHM, TC> Executor<I, S> for ForkserverExecutor<I, OT, S, SHM, TC>
 where
     OT: ObserversTuple<I, S>,
     S: HasExecutions,
@@ -1578,13 +1578,7 @@ where
     SHM: ShMem,
 {
     #[inline]
-    fn run_target(
-        &mut self,
-        _objective: &mut OF,
-        state: &mut S,
-        _mgr: &mut EM,
-        input: &I,
-    ) -> Result<ExitKind, Error> {
+    fn run_target(&mut self, state: &mut S, input: &I) -> Result<ExitKind, Error> {
         self.execute_input(state, input)
     }
 }

@@ -36,7 +36,7 @@ impl<EM, TE, S, Z> Named for AFLppCmplogTracingStage<'_, EM, TE, S, Z> {
 
 impl<E, EM, TE, S, Z> Stage<E, EM, S, Z> for AFLppCmplogTracingStage<'_, EM, TE, S, Z>
 where
-    TE: HasObservers + Executor<EM, BytesInput, Z::Objective, S>,
+    TE: HasObservers + Executor<BytesInput, S>,
     TE::Observers: MatchNameRef + ObserversTuple<BytesInput, S>,
     S: HasCorpus<BytesInput>
         + HasCurrentTestcase<BytesInput>
@@ -48,10 +48,10 @@ where
     #[inline]
     fn perform(
         &mut self,
-        fuzzer: &mut Z,
+        _fuzzer: &mut Z,
         _executor: &mut E,
         state: &mut S,
-        manager: &mut EM,
+        _manager: &mut EM,
     ) -> Result<(), Error> {
         // First run with the un-mutated input
         let unmutated_input = state.current_input_cloned()?;
@@ -72,12 +72,7 @@ where
             .observers_mut()
             .pre_exec_all(state, &unmutated_input)?;
 
-        let exit_kind = self.tracer_executor.run_target(
-            fuzzer.objective_mut(),
-            state,
-            manager,
-            &unmutated_input,
-        )?;
+        let exit_kind = self.tracer_executor.run_target(state, &unmutated_input)?;
 
         self.tracer_executor
             .observers_mut()
@@ -105,12 +100,7 @@ where
             .observers_mut()
             .pre_exec_all(state, &mutated_input)?;
 
-        let exit_kind = self.tracer_executor.run_target(
-            fuzzer.objective_mut(),
-            state,
-            manager,
-            &mutated_input,
-        )?;
+        let exit_kind = self.tracer_executor.run_target(state, &mutated_input)?;
 
         self.tracer_executor
             .observers_mut()
