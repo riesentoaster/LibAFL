@@ -1,10 +1,6 @@
 //! Fuzzer instance that increases stability by executing the same input multiple times.
 
-use alloc::{
-    borrow::Cow,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{borrow::Cow, string::ToString, vec::Vec};
 use core::{fmt::Debug, hash::Hash, marker::PhantomData};
 
 use hashbrown::HashMap;
@@ -30,7 +26,7 @@ use crate::{
         Fuzzer, HasFeedback, HasObjective, HasScheduler, InputFilter, NopInputFilter,
         STATS_TIMEOUT_DEFAULT,
     },
-    inputs::Input,
+    inputs::{Input, MultipartInput},
     mark_feature_time,
     monitors::{AggregatorOps, UserStats, UserStatsValue},
     observers::ObserversTuple,
@@ -43,6 +39,20 @@ use crate::{
     },
     Error, HasMetadata,
 };
+
+#[allow(missing_docs)]
+pub trait HasLen {
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl<I> HasLen for MultipartInput<I> {
+    fn len(&self) -> usize {
+        self.parts().len()
+    }
+}
 
 /// A fuzzer instance for unstable targets that increases stability by executing the same input multiple times.
 ///
@@ -65,6 +75,9 @@ pub struct ReplayingFuzzer<CS, F, O, IF, OF> {
     feedback: F,
     objective: OF,
     input_filter: IF,
+    consistency_ratios: [Vec<u32>; 100],
+    consistency_ratios_idx: usize,
+    consistency_ratios_full: bool,
 }
 
 impl<CS, F, O, I, IF, OF, S> HasScheduler<I, S> for ReplayingFuzzer<CS, F, O, IF, OF>
@@ -331,7 +344,7 @@ where
         + HasCurrentTestcase<I>
         + HasExecutions
         + HasLastFoundTime,
-    I: Input,
+    I: Input + HasLen,
     O: Hash,
 {
     /// Process one input, adding to the respective corpora if needed and firing the right events
@@ -367,7 +380,7 @@ where
         + HasCurrentTestcase<I>
         + HasLastFoundTime
         + HasExecutions,
-    I: Input,
+    I: Input + HasLen,
     IF: InputFilter<I>,
     O: Hash,
 {
@@ -656,6 +669,9 @@ impl<CS, F, O, IF, OF> ReplayingFuzzer<CS, F, O, IF, OF> {
             feedback,
             objective,
             input_filter,
+            consistency_ratios: std::array::from_fn(|_| Vec::new()),
+            consistency_ratios_idx: 0,
+            consistency_ratios_full: false,
         }
     }
 }
@@ -730,6 +746,7 @@ where
     S: HasExecutions + HasCorpus<I> + MaybeHasClientPerfMonitor,
     O: Hash,
     EM: EventFirer<I, S>,
+    I: HasLen,
 {
     /// Runs the input and triggers observers and feedback
     fn execute_input(
@@ -765,28 +782,42 @@ where
 
             let total_replayed = results.values().sum::<u32>();
 
+            if exit_kind == ExitKind::Crash {
+                break (exit_kind, total_replayed);
+            }
+
             let ((max_hash, max_exit_kind), &max_count) =
                 results.iter().max_by(|(_, a), (_, b)| a.cmp(b)).unwrap();
 
-            if max_count < self.min_count_diff {
+            if total_replayed < self.min_count_diff {
                 continue; // require at least min_count_diff replays
             }
 
-            let consistent_enough = results.values().filter(|e| **e != max_count).all(|&count| {
+            let latest_execution_is_dominant = hash == *max_hash && exit_kind == *max_exit_kind;
+
+            let mut sorted_results = results.iter().collect::<Vec<_>>();
+            sorted_results.sort_by(|(_k1, v1), (_k2, v2)| v2.cmp(v1));
+
+            let consistent_enough = sorted_results.iter().skip(1).all(|(_, &count)| {
                 let min_value_count = count + self.min_count_diff;
                 let min_value_factor = f64::from(count) * self.min_factor_diff;
                 min_value_count <= max_count && min_value_factor <= f64::from(max_count)
             });
 
-            let latest_execution_is_dominant = hash == *max_hash && exit_kind == *max_exit_kind;
+            let result_str = sorted_results
+                .iter()
+                .map(|((hash, exit_kind), count)| format!("{count}x {hash} {exit_kind:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
 
             if consistent_enough && latest_execution_is_dominant {
                 break (exit_kind, total_replayed);
             } else if u64::from(total_replayed) >= self.max_trys {
                 log::warn!(
-                    "Input still not consistent after {} tries, using the latest observer value and most common exit_kind. Results: {}",
+                    "Input with len {} inconsistent after {} tries. Results: {}",
+                    input.len(),
                     total_replayed,
-                    results.iter().map(|((hash, exit_kind), count)| format!("{count} times with hash {hash} and ExitKind::{exit_kind:?}")).fold(String::new(), |acc,e| format!("{acc}, {e}"))
+                    result_str
                 );
 
                 probably_consistent = false;
@@ -797,7 +828,79 @@ where
                 };
                 break (returned_exit_kind, total_replayed);
             }
+            if total_replayed > self.min_count_diff && total_replayed % self.min_count_diff == 0 {
+                log::debug!(
+                    "After {} tries, still unstable: {}",
+                    total_replayed,
+                    result_str
+                );
+            }
         };
+
+        let mut consistency_ratios = results.values().cloned().collect::<Vec<_>>();
+        consistency_ratios.sort_unstable_by(|a, b| b.cmp(a));
+        log::info!(
+            "consistency_ratios for input of len {}: {}",
+            input.len(),
+            consistency_ratios
+                .iter()
+                .map(|e| format!("{e}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
+        // Store in circular buffer
+        self.consistency_ratios[self.consistency_ratios_idx] = consistency_ratios;
+        self.consistency_ratios_idx = (self.consistency_ratios_idx + 1) % 100;
+        if self.consistency_ratios_idx == 0 {
+            self.consistency_ratios_full = true;
+        }
+
+        // Calculate average ratio between most and second most frequent counts
+        let (second_to_most_sum, all_other_to_most_sum, count) = if self.consistency_ratios_full {
+            // Use all 100 entries
+            self.consistency_ratios.iter()
+        } else {
+            // Use only up to current index
+            self.consistency_ratios[..self.consistency_ratios_idx].iter()
+        }
+        .map(|ratios| {
+            let most = f64::from(*ratios.get(0).unwrap_or(&100));
+            let second = f64::from(*ratios.get(1).unwrap_or(&0));
+            let all_other = f64::from(ratios.iter().skip(1).sum::<u32>());
+            let second_to_most = second / most;
+            let all_other_to_most = all_other / most;
+            (second_to_most, all_other_to_most)
+        })
+        .fold((0.0, 0.0, 0.0), |(acc1, acc2, count), (e1, e2)| {
+            (acc1 + e1, acc2 + e2, count + 1.0)
+        });
+
+        let second_to_most_avg = second_to_most_sum / count;
+        let all_other_to_most_avg = all_other_to_most_sum / count;
+
+        event_mgr.fire(
+            state,
+            Event::UpdateUserStats {
+                name: Cow::Borrowed("second_to_most_rolling_avg"),
+                value: UserStats::new(
+                    UserStatsValue::Float(second_to_most_avg),
+                    AggregatorOps::Avg,
+                ),
+                phantom: PhantomData,
+            },
+        )?;
+        event_mgr.fire(
+            state,
+            Event::UpdateUserStats {
+                name: Cow::Borrowed("all_other_to_most_rolling_avg"),
+                value: UserStats::new(
+                    UserStatsValue::Float(all_other_to_most_avg),
+                    AggregatorOps::Avg,
+                ),
+                phantom: PhantomData,
+            },
+        )?;
 
         let execution_count = UserStats::new(
             UserStatsValue::Ratio(total_replayed.into(), 1),
