@@ -12,6 +12,8 @@ use serde::Serialize;
 
 #[cfg(feature = "std")]
 use crate::fuzzer::BloomInputFilter;
+#[cfg(feature = "multipart_inputs")]
+use crate::inputs::MultipartInput;
 #[cfg(feature = "introspection")]
 use crate::monitors::PerfFeature;
 use crate::{
@@ -26,7 +28,7 @@ use crate::{
         Fuzzer, HasFeedback, HasObjective, HasScheduler, InputFilter, NopInputFilter,
         STATS_TIMEOUT_DEFAULT,
     },
-    inputs::{Input, MultipartInput},
+    inputs::{Input, ValueInput},
     mark_feature_time,
     monitors::{AggregatorOps, UserStats, UserStatsValue},
     observers::ObserversTuple,
@@ -48,6 +50,14 @@ pub trait HasLen {
     }
 }
 
+// hack for unit test
+impl HasLen for ValueInput<usize> {
+    fn len(&self) -> usize {
+        1
+    }
+}
+
+#[cfg(feature = "multipart_inputs")]
 impl<I> HasLen for MultipartInput<I> {
     fn len(&self) -> usize {
         self.parts().len()
@@ -65,12 +75,13 @@ impl<I> HasLen for MultipartInput<I> {
 /// If `max_trys` is hit, the last observer values are left in place and the most frequent [`ExitKind`] is returned.
 /// If `ignore_inconsistent_inputs` is set, [`ExitKind::Inconsistent`] is reported and the input is added to neighter the corpus nor the solutions.
 #[derive(Debug)]
-pub struct ReplayingFuzzer<CS, F, O, IF, OF> {
+pub struct ReplayingFuzzer<CS, F, O1, O2, IF, OF> {
     min_count_diff: u32,
     min_factor_diff: f64,
     max_trys: u64,
     ignore_inconsistent_inputs: bool,
-    handle: Handle<O>,
+    handle1: Option<Handle<O1>>,
+    handle2: Option<Handle<O2>>,
     scheduler: CS,
     feedback: F,
     objective: OF,
@@ -80,22 +91,106 @@ pub struct ReplayingFuzzer<CS, F, O, IF, OF> {
     consistency_ratios_full: bool,
 }
 
-impl<CS, F, O, I, IF, OF, S> HasScheduler<I, S> for ReplayingFuzzer<CS, F, O, IF, OF>
-where
-    CS: Scheduler<I, S>,
-{
-    type Scheduler = CS;
-
-    fn scheduler(&self) -> &CS {
-        &self.scheduler
-    }
-
-    fn scheduler_mut(&mut self) -> &mut CS {
-        &mut self.scheduler
+impl<CS, F, O1, O2, IF, OF> ReplayingFuzzer<CS, F, O1, O2, IF, OF> {
+    /// Create a new [`ReplayingFuzzer`] with standard behavior and the provided duplicate input execution filter.
+    #[expect(clippy::too_many_arguments)]
+    pub fn with_input_filter(
+        min_count_diff: u32,
+        min_factor_diff: f64,
+        max_trys: u64,
+        ignore_inconsistent_inputs: bool,
+        handle1: Option<Handle<O1>>,
+        handle2: Option<Handle<O2>>,
+        scheduler: CS,
+        feedback: F,
+        objective: OF,
+        input_filter: IF,
+    ) -> Self {
+        Self {
+            min_count_diff,
+            min_factor_diff,
+            max_trys,
+            ignore_inconsistent_inputs,
+            handle1,
+            handle2,
+            scheduler,
+            feedback,
+            objective,
+            input_filter,
+            consistency_ratios: std::array::from_fn(|_| Vec::new()),
+            consistency_ratios_idx: 0,
+            consistency_ratios_full: false,
+        }
     }
 }
 
-impl<CS, F, O, IF, OF> HasFeedback for ReplayingFuzzer<CS, F, O, IF, OF> {
+impl<CS, F, O1, O2, OF> ReplayingFuzzer<CS, F, O1, O2, NopInputFilter, OF> {
+    /// Create a new [`ReplayingFuzzer`] with standard behavior and no duplicate input execution filtering.
+    #[expect(clippy::too_many_arguments)]
+    pub fn new(
+        min_count_diff: u32,
+        min_factor_diff: f64,
+        max_trys: u64,
+        ignore_inconsistent_inputs: bool,
+        handle1: Option<Handle<O1>>,
+        handle2: Option<Handle<O2>>,
+        scheduler: CS,
+        feedback: F,
+        objective: OF,
+    ) -> Self {
+        Self::with_input_filter(
+            min_count_diff,
+            min_factor_diff,
+            max_trys,
+            ignore_inconsistent_inputs,
+            handle1,
+            handle2,
+            scheduler,
+            feedback,
+            objective,
+            NopInputFilter,
+        )
+    }
+}
+
+#[cfg(feature = "std")] // hashing requires std
+impl<CS, F, O1, O2, OF> ReplayingFuzzer<CS, F, O1, O2, BloomInputFilter, OF> {
+    /// Create a new [`ReplayingFuzzer`], which, with a certain certainty, executes each input only once.
+    ///
+    /// This is achieved by hashing each input and using a bloom filter to differentiate inputs.
+    ///
+    /// Use this implementation if hashing each input is very fast compared to executing potential duplicate inputs.
+    #[expect(clippy::too_many_arguments)]
+    pub fn with_bloom_input_filter(
+        min_count_diff: u32,
+        min_factor_diff: f64,
+        max_trys: u64,
+        ignore_inconsistent_inputs: bool,
+        handle1: Option<Handle<O1>>,
+        handle2: Option<Handle<O2>>,
+        scheduler: CS,
+        feedback: F,
+        objective: OF,
+        items_count: usize,
+        fp_p: f64,
+    ) -> Self {
+        let input_filter = BloomInputFilter::new(items_count, fp_p);
+        Self::with_input_filter(
+            min_count_diff,
+            min_factor_diff,
+            max_trys,
+            ignore_inconsistent_inputs,
+            handle1,
+            handle2,
+            scheduler,
+            feedback,
+            objective,
+            input_filter,
+        )
+    }
+}
+
+impl<CS, F, O1, O2, IF, OF> HasFeedback for ReplayingFuzzer<CS, F, O1, O2, IF, OF> {
     type Feedback = F;
 
     fn feedback(&self) -> &Self::Feedback {
@@ -107,7 +202,7 @@ impl<CS, F, O, IF, OF> HasFeedback for ReplayingFuzzer<CS, F, O, IF, OF> {
     }
 }
 
-impl<CS, F, O, IF, OF> HasObjective for ReplayingFuzzer<CS, F, O, IF, OF> {
+impl<CS, F, O1, O2, IF, OF> HasObjective for ReplayingFuzzer<CS, F, O1, O2, IF, OF> {
     type Objective = OF;
 
     fn objective(&self) -> &OF {
@@ -119,8 +214,8 @@ impl<CS, F, O, IF, OF> HasObjective for ReplayingFuzzer<CS, F, O, IF, OF> {
     }
 }
 
-impl<CS, EM, F, O, I, IF, OF, OT, S> ExecutionProcessor<EM, I, OT, S>
-    for ReplayingFuzzer<CS, F, O, IF, OF>
+impl<CS, EM, F, O1, O2, I, IF, OF, OT, S> ExecutionProcessor<EM, I, OT, S>
+    for ReplayingFuzzer<CS, F, O1, O2, IF, OF>
 where
     CS: Scheduler<I, S>,
     EM: EventFirer<I, S> + CanSerializeObserver<OT>,
@@ -329,8 +424,8 @@ where
     }
 }
 
-impl<CS, E, EM, F, O, I, IF, OF, S> EvaluatorObservers<E, EM, I, S>
-    for ReplayingFuzzer<CS, F, O, IF, OF>
+impl<CS, E, EM, F, O1, O2, I, IF, OF, S> EvaluatorObservers<E, EM, I, S>
+    for ReplayingFuzzer<CS, F, O1, O2, IF, OF>
 where
     CS: Scheduler<I, S>,
     E: HasObservers + Executor<EM, I, S, Self>,
@@ -345,7 +440,8 @@ where
         + HasExecutions
         + HasLastFoundTime,
     I: Input + HasLen,
-    O: Hash,
+    O1: Hash,
+    O2: Hash,
 {
     /// Process one input, adding to the respective corpora if needed and firing the right events
     #[inline]
@@ -366,7 +462,8 @@ where
     }
 }
 
-impl<CS, E, EM, F, O, I, IF, OF, S> Evaluator<E, EM, I, S> for ReplayingFuzzer<CS, F, O, IF, OF>
+impl<CS, E, EM, F, O1, O2, I, IF, OF, S> Evaluator<E, EM, I, S>
+    for ReplayingFuzzer<CS, F, O1, O2, IF, OF>
 where
     CS: Scheduler<I, S>,
     E: HasObservers + Executor<EM, I, S, Self>,
@@ -382,7 +479,8 @@ where
         + HasExecutions,
     I: Input + HasLen,
     IF: InputFilter<I>,
-    O: Hash,
+    O1: Hash,
+    O2: Hash,
 {
     fn evaluate_filtered(
         &mut self,
@@ -520,8 +618,8 @@ where
     }
 }
 
-impl<CS, E, EM, F, O, I, IF, OF, S, ST> Fuzzer<E, EM, I, S, ST>
-    for ReplayingFuzzer<CS, F, O, IF, OF>
+impl<CS, E, EM, F, O1, O2, I, IF, OF, S, ST> Fuzzer<E, EM, I, S, ST>
+    for ReplayingFuzzer<CS, F, O1, O2, IF, OF>
 where
     CS: Scheduler<I, S>,
     EM: ProgressReporter<S> + EventProcessor<E, S, Self>,
@@ -645,106 +743,15 @@ where
     }
 }
 
-impl<CS, F, O, IF, OF> ReplayingFuzzer<CS, F, O, IF, OF> {
-    /// Create a new [`ReplayingFuzzer`] with standard behavior and the provided duplicate input execution filter.
-    #[expect(clippy::too_many_arguments)]
-    pub fn with_input_filter(
-        min_count_diff: u32,
-        min_factor_diff: f64,
-        max_trys: u64,
-        ignore_inconsistent_inputs: bool,
-        handle: Handle<O>,
-        scheduler: CS,
-        feedback: F,
-        objective: OF,
-        input_filter: IF,
-    ) -> Self {
-        Self {
-            min_count_diff,
-            min_factor_diff,
-            max_trys,
-            ignore_inconsistent_inputs,
-            handle,
-            scheduler,
-            feedback,
-            objective,
-            input_filter,
-            consistency_ratios: std::array::from_fn(|_| Vec::new()),
-            consistency_ratios_idx: 0,
-            consistency_ratios_full: false,
-        }
-    }
-}
-
-impl<CS, F, O, OF> ReplayingFuzzer<CS, F, O, NopInputFilter, OF> {
-    /// Create a new [`ReplayingFuzzer`] with standard behavior and no duplicate input execution filtering.
-    #[expect(clippy::too_many_arguments)]
-    pub fn new(
-        min_count_diff: u32,
-        min_factor_diff: f64,
-        max_trys: u64,
-        ignore_inconsistent_inputs: bool,
-        handle: Handle<O>,
-        scheduler: CS,
-        feedback: F,
-        objective: OF,
-    ) -> Self {
-        Self::with_input_filter(
-            min_count_diff,
-            min_factor_diff,
-            max_trys,
-            ignore_inconsistent_inputs,
-            handle,
-            scheduler,
-            feedback,
-            objective,
-            NopInputFilter,
-        )
-    }
-}
-
-#[cfg(feature = "std")] // hashing requires std
-impl<CS, F, O, OF> ReplayingFuzzer<CS, F, O, BloomInputFilter, OF> {
-    /// Create a new [`ReplayingFuzzer`], which, with a certain certainty, executes each input only once.
-    ///
-    /// This is achieved by hashing each input and using a bloom filter to differentiate inputs.
-    ///
-    /// Use this implementation if hashing each input is very fast compared to executing potential duplicate inputs.
-    #[expect(clippy::too_many_arguments)]
-    pub fn with_bloom_input_filter(
-        min_count_diff: u32,
-        min_factor_diff: f64,
-        max_trys: u64,
-        ignore_inconsistent_inputs: bool,
-        handle: Handle<O>,
-        scheduler: CS,
-        feedback: F,
-        objective: OF,
-        items_count: usize,
-        fp_p: f64,
-    ) -> Self {
-        let input_filter = BloomInputFilter::new(items_count, fp_p);
-        Self::with_input_filter(
-            min_count_diff,
-            min_factor_diff,
-            max_trys,
-            ignore_inconsistent_inputs,
-            handle,
-            scheduler,
-            feedback,
-            objective,
-            input_filter,
-        )
-    }
-}
-
-impl<CS, E, EM, F, O, I, IF, OF, S> ExecutesInput<E, EM, I, S> for ReplayingFuzzer<CS, F, O, IF, OF>
+impl<CS, E, EM, F, O1, O2, I, IF, OF, S> ExecutesInput<E, EM, I, S>
+    for ReplayingFuzzer<CS, F, O1, O2, IF, OF>
 where
     CS: Scheduler<I, S>,
     E: Executor<EM, I, S, Self> + HasObservers,
     E::Observers: ObserversTuple<I, S>,
     S: HasExecutions + HasCorpus<I> + MaybeHasClientPerfMonitor,
-    O: Hash,
+    O1: Hash,
+    O2: Hash,
     EM: EventFirer<I, S>,
     I: HasLen,
 {
@@ -776,9 +783,20 @@ where
 
             mark_feature_time!(state, PerfFeature::PostExecObservers);
 
-            let observer = observers.get(&self.handle).expect("observer not found");
-            let hash = generic_hash_std(observer);
-            *results.entry((hash, exit_kind)).or_insert(0) += 1;
+            // Get hashes for available observers
+            let hash1 = self.handle1.as_ref().map(|h| {
+                let observer = observers.get(h).expect("observer1 not found");
+                generic_hash_std(observer)
+            });
+            let hash2 = self.handle2.as_ref().map(|h| {
+                let observer = observers.get(h).expect("observer2 not found");
+                generic_hash_std(observer)
+            });
+
+            // Only track results if at least one observer is present
+            if hash1.is_some() || hash2.is_some() {
+                *results.entry((exit_kind, hash1, hash2)).or_insert(0) += 1;
+            }
 
             let total_replayed = results.values().sum::<u32>();
 
@@ -786,14 +804,20 @@ where
                 break (exit_kind, total_replayed);
             }
 
-            let ((max_hash, max_exit_kind), &max_count) =
+            // If no observers are present, we don't need to check for consistency
+            if hash1.is_none() && hash2.is_none() {
+                break (exit_kind, total_replayed);
+            }
+
+            let ((max_exit_kind, max_hash1, max_hash2), &max_count) =
                 results.iter().max_by(|(_, a), (_, b)| a.cmp(b)).unwrap();
 
             if total_replayed < self.min_count_diff {
                 continue; // require at least min_count_diff replays
             }
 
-            let latest_execution_is_dominant = hash == *max_hash && exit_kind == *max_exit_kind;
+            let latest_execution_is_dominant =
+                exit_kind == *max_exit_kind && hash1 == *max_hash1 && hash2 == *max_hash2;
 
             let mut sorted_results = results.iter().collect::<Vec<_>>();
             sorted_results.sort_by(|(_k1, v1), (_k2, v2)| v2.cmp(v1));
@@ -806,7 +830,9 @@ where
 
             let result_str = sorted_results
                 .iter()
-                .map(|((hash, exit_kind), count)| format!("{count}x {hash} {exit_kind:?}"))
+                .map(|((exit_kind, hash1, hash2), count)| {
+                    format!("{count}x ({exit_kind:?}, {hash1:?}, {hash2:?})")
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
 
@@ -837,109 +863,159 @@ where
             }
         };
 
-        let mut consistency_ratios = results.values().cloned().collect::<Vec<_>>();
-        consistency_ratios.sort_unstable_by(|a, b| b.cmp(a));
-        log::info!(
-            "consistency_ratios for input of len {}: {}",
-            input.len(),
-            consistency_ratios
-                .iter()
-                .map(|e| format!("{e}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+        // Only track consistency metrics if we have observers
+        if self.handle1.is_some() || self.handle2.is_some() {
+            let mut consistency_ratios = results.values().copied().collect::<Vec<_>>();
+            consistency_ratios.sort_unstable_by(|a, b| b.cmp(a));
+            log::info!(
+                "consistency_ratios for input of len {}: {}",
+                input.len(),
+                consistency_ratios
+                    .iter()
+                    .map(|e| format!("{e}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
 
-        // Store in circular buffer
-        self.consistency_ratios[self.consistency_ratios_idx] = consistency_ratios;
-        self.consistency_ratios_idx = (self.consistency_ratios_idx + 1) % 100;
-        if self.consistency_ratios_idx == 0 {
-            self.consistency_ratios_full = true;
-        }
+            // Get the most frequent result as the "correct" one
+            if let Some(((_, correct_hash1, correct_hash2), _)) =
+                results.iter().max_by(|(_, a), (_, b)| a.cmp(b))
+            {
+                let mut both_wrong = 0;
+                let mut first_wrong_second_right = 0;
+                let mut first_right_second_wrong = 0;
+                let mut both_right = 0;
 
-        // Calculate average ratio between most and second most frequent counts
-        let (second_to_most_sum, all_other_to_most_sum, count) = if self.consistency_ratios_full {
-            // Use all 100 entries
-            self.consistency_ratios.iter()
-        } else {
-            // Use only up to current index
-            self.consistency_ratios[..self.consistency_ratios_idx].iter()
-        }
-        .map(|ratios| {
-            let most = f64::from(*ratios.get(0).unwrap_or(&100));
-            let second = f64::from(*ratios.get(1).unwrap_or(&0));
-            let all_other = f64::from(ratios.iter().skip(1).sum::<u32>());
-            let second_to_most = second / most;
-            let all_other_to_most = all_other / most;
-            (second_to_most, all_other_to_most)
-        })
-        .fold((0.0, 0.0, 0.0), |(acc1, acc2, count), (e1, e2)| {
-            (acc1 + e1, acc2 + e2, count + 1.0)
-        });
+                for ((_, hash1, hash2), count) in &results {
+                    let first_correct = hash1 == correct_hash1;
+                    let second_correct = hash2 == correct_hash2;
 
-        let second_to_most_avg = second_to_most_sum / count;
-        let all_other_to_most_avg = all_other_to_most_sum / count;
+                    match (first_correct, second_correct) {
+                        (false, false) => both_wrong += count,
+                        (false, true) => first_wrong_second_right += count,
+                        (true, false) => first_right_second_wrong += count,
+                        (true, true) => both_right += count,
+                    }
+                }
 
-        event_mgr.fire(
-            state,
-            Event::UpdateUserStats {
-                name: Cow::Borrowed("second_to_most_rolling_avg"),
-                value: UserStats::new(
-                    UserStatsValue::Float(second_to_most_avg),
-                    AggregatorOps::Avg,
-                ),
-                phantom: PhantomData,
-            },
-        )?;
-        event_mgr.fire(
-            state,
-            Event::UpdateUserStats {
-                name: Cow::Borrowed("all_other_to_most_rolling_avg"),
-                value: UserStats::new(
-                    UserStatsValue::Float(all_other_to_most_avg),
-                    AggregatorOps::Avg,
-                ),
-                phantom: PhantomData,
-            },
-        )?;
+                log::info!(
+                    "Observer correctness stats for input of len {}: both wrong: {}, first wrong/second right: {}, first right/second wrong: {}, both right: {}",
+                    input.len(),
+                    both_wrong,
+                    first_wrong_second_right,
+                    first_right_second_wrong,
+                    both_right
+                );
+            }
 
-        let execution_count = UserStats::new(
-            UserStatsValue::Ratio(total_replayed.into(), 1),
-            AggregatorOps::Avg,
-        );
+            // Store in circular buffer
+            self.consistency_ratios[self.consistency_ratios_idx] = consistency_ratios;
+            self.consistency_ratios_idx = (self.consistency_ratios_idx + 1) % 100;
+            if self.consistency_ratios_idx == 0 {
+                self.consistency_ratios_full = true;
+            }
 
-        event_mgr.fire(
-            state,
-            Event::UpdateUserStats {
-                name: Cow::Borrowed("consistency-caused-replay-per-input"),
-                value: execution_count.clone(),
-                phantom: PhantomData,
-            },
-        )?;
+            // Calculate average ratio between most and second most frequent counts
+            let (second_to_most_sum, all_other_to_most_sum, count) =
+                if self.consistency_ratios_full {
+                    // Use all 100 entries
+                    self.consistency_ratios.iter()
+                } else {
+                    // Use only up to current index
+                    self.consistency_ratios[..self.consistency_ratios_idx].iter()
+                }
+                .map(|ratios| {
+                    let most = f64::from(*ratios.first().unwrap_or(&100));
+                    let second = f64::from(*ratios.get(1).unwrap_or(&0));
+                    let all_other = f64::from(ratios.iter().skip(1).sum::<u32>());
+                    let second_to_most = second / most;
+                    let all_other_to_most = all_other / most;
+                    (second_to_most, all_other_to_most)
+                })
+                .fold((0.0, 0.0, 0.0), |(acc1, acc2, count), (e1, e2)| {
+                    (acc1 + e1, acc2 + e2, count + 1.0)
+                });
 
-        if probably_consistent {
+            let second_to_most_avg = second_to_most_sum / count;
+            let all_other_to_most_avg = all_other_to_most_sum / count;
+
             event_mgr.fire(
                 state,
                 Event::UpdateUserStats {
-                    name: Cow::Borrowed("consistency-caused-replay-per-input-success"),
-                    value: execution_count,
+                    name: Cow::Borrowed("second_to_most_rolling_avg"),
+                    value: UserStats::new(
+                        UserStatsValue::Float(second_to_most_avg),
+                        AggregatorOps::Avg,
+                    ),
+                    phantom: PhantomData,
+                },
+            )?;
+            event_mgr.fire(
+                state,
+                Event::UpdateUserStats {
+                    name: Cow::Borrowed("all_other_to_most_rolling_avg"),
+                    value: UserStats::new(
+                        UserStatsValue::Float(all_other_to_most_avg),
+                        AggregatorOps::Avg,
+                    ),
+                    phantom: PhantomData,
+                },
+            )?;
+
+            let execution_count = UserStats::new(
+                UserStatsValue::Ratio(total_replayed.into(), 1),
+                AggregatorOps::Avg,
+            );
+
+            event_mgr.fire(
+                state,
+                Event::UpdateUserStats {
+                    name: Cow::Borrowed("consistency-caused-replay-per-input"),
+                    value: execution_count.clone(),
+                    phantom: PhantomData,
+                },
+            )?;
+
+            if probably_consistent {
+                event_mgr.fire(
+                    state,
+                    Event::UpdateUserStats {
+                        name: Cow::Borrowed("consistency-caused-replay-per-input-success"),
+                        value: execution_count,
+                        phantom: PhantomData,
+                    },
+                )?;
+            }
+
+            event_mgr.fire(
+                state,
+                Event::UpdateUserStats {
+                    name: Cow::Borrowed("uncaptured-inconsistent-rate"),
+                    value: UserStats::new(
+                        UserStatsValue::Ratio(u64::from(probably_consistent), 1),
+                        AggregatorOps::Avg,
+                    ),
                     phantom: PhantomData,
                 },
             )?;
         }
 
-        event_mgr.fire(
-            state,
-            Event::UpdateUserStats {
-                name: Cow::Borrowed("uncaptured-inconsistent-rate"),
-                value: UserStats::new(
-                    UserStatsValue::Ratio(u64::from(probably_consistent), 1),
-                    AggregatorOps::Avg,
-                ),
-                phantom: PhantomData,
-            },
-        )?;
-
         Ok(exit_kind)
+    }
+}
+
+impl<CS, F, O1, O2, I, IF, OF, S> HasScheduler<I, S> for ReplayingFuzzer<CS, F, O1, O2, IF, OF>
+where
+    CS: Scheduler<I, S>,
+{
+    type Scheduler = CS;
+
+    fn scheduler(&self) -> &CS {
+        &self.scheduler
+    }
+
+    fn scheduler_mut(&mut self) -> &mut CS {
+        &mut self.scheduler
     }
 }
 
@@ -970,8 +1046,11 @@ mod tests {
         let map = Rc::new(RefCell::new(vec![0_usize]));
         let return_value = Rc::new(RefCell::new(vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
         let mut map_borrow = map.borrow_mut();
-        let observer = unsafe {
-            StdMapObserver::from_mut_ptr("observer", map_borrow.as_mut_ptr(), map_borrow.len())
+        let observer1 = unsafe {
+            StdMapObserver::from_mut_ptr("observer1", map_borrow.as_mut_ptr(), map_borrow.len())
+        };
+        let observer2 = unsafe {
+            StdMapObserver::from_mut_ptr("observer2", map_borrow.as_mut_ptr(), map_borrow.len())
         };
         drop(map_borrow);
         let mut fuzzer = ReplayingFuzzer::new(
@@ -979,7 +1058,8 @@ mod tests {
             1.0,
             10,
             true,
-            observer.handle(),
+            Some(observer1.handle()),
+            Some(observer2.handle()),
             StdScheduler::new(),
             tuple_list!(),
             tuple_list!(),
@@ -1004,7 +1084,7 @@ mod tests {
         };
         let mut executor = InProcessExecutor::new(
             &mut harness,
-            tuple_list!(observer),
+            tuple_list!(observer1, observer2),
             &mut fuzzer,
             &mut state,
             &mut event_mgr,
